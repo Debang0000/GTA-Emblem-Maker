@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "fixture": {
+    "width": 512,
+    "height": 512,
+    "rgbaSha256": "43c5d261818586de36956c5c62edad8f65454f19870896dc092f7298fdffbb4d"
+  },
+  "request": {
+    "layer1Seed": 102984,
+    "layer1ShapeMask": 1,
+    "layer501ShapeMask": 15,
+    "selectionMode": 1,
+    "deviceChunkRounds": 16
+  },
+  "weightMaps": {
+    "uniform": {
+      "q8Sha256": "0a627e0b61064009d69fec6d483a5355a8c8f5991bcc7a7dd6a8b19e00db2ed0"
+    },
+    "alpha-protect": {
+      "q8Sha256": "25abaf8f9b213267ccd7ca792ec3c6b22a6bc92dbfc64896392a25a8dbdb0fe4"
+    },
+    "edge-plus-laplacian": {
+      "q8Sha256": "dcb3f7b555d81f56bfb8b8160ffe99ffb31fbb91b70c677c55eaf2861bf0f584"
+    },
+    "edge-plus-laplacian-alpha-protect": {
+      "q8Sha256": "b7a10e447d10fc8bd922996efba4c95b45625c546894ae5ac9ff924a53f186c0"
+    }
+  },
+  "totals": {
+    "opaqueInitial": "5241871818",
+    "transparentInitial": "32035203510",
+    "opaqueUniform": "5241871818",
+    "transparentAlphaProtect": "65596065971"
+  },
+  "resident": {
+    "command16Layer1": {
+      "selectedShapeKind": 0,
+      "candidate": {
+        "candidateId": 228098,
+        "cx": 185,
+        "cy": 401,
+        "rx": 4,
+        "ry": 512,
+        "alpha": 168,
+        "angleDegrees": 65.58023071289062,
+        "group": 12
+      },
+      "score": {
+        "index": 0,
+        "candidateId": 228098,
+        "r": 129,
+        "g": 250,
+        "b": 128,
+        "a": 168,
+        "energy": 0.27654361338659544,
+        "oldErrorDelta": "91688097",
+        "newErrorDelta": "64254668"
+      }
+    },
+    "command17MixedOracle": {
+      "selectedShapeKind": 3,
+      "candidate": {
+        "candidateId": 173035,
+        "cx": 278,
+        "cy": 219,
+        "rx": 334,
+        "ry": 4,
+        "alpha": 157,
+        "angleDegrees": 155.58346557617188,
+        "group": 4
+      },
+      "score": {
+        "index": 0,
+        "candidateId": 173035,
+        "r": 127,
+        "g": 255,
+        "b": 130,
+        "a": 157,
+        "energy": 0.2765250309809753,
+        "oldErrorDelta": "97604793",
+        "newErrorDelta": "69470617"
+      }
+    }
+  },
+  "raster": {
+    "maskQ16Sha256": "68f305add8a322040fd5ce5c33eca7c376125d9c4d7329a5e719b192b8716c32",
+    "lineCount": 3330
+  },
+  "postApply": {
+    "currentRgbaSha256": "fd4a94c6a75e8484a3747be630a5745d9104ea3272c2e4af65dc3935241a9d89",
+    "baseTotalError": "5219810594"
+  },
+  "shapeMapping": {
+    "poolShapeFamily": "line-rect",
+    "payloadShape": "rotated-rect"
+  },
+  "numericEdgeCases": {
+    "averageInitialRgbaSha256": "582a3258c627fb8bff1ca1ded55f9462d756096b3e3047ac9470390b83c2553e",
+    "fullError": "19",
+    "weightedTruncationTotal": "2",
+    "energy": 0.00196078431372549,
+    "rasterAliases": {
+      "rotated": {
+        "maskQ16Sha256": "be83bd50b8a2dfcbb40e5151661f8b4313a15b4c085175238b96f3e04a4d9572",
+        "lineCount": 4
+      },
+      "rotated-rect": {
+        "maskQ16Sha256": "0af13452727156e57aa5ab6160c0a41288f9b18729d6a2fc5fa7ea8144a79cec",
+        "lineCount": 6
+      },
+      "rotated-triangle": {
+        "maskQ16Sha256": "be83bd50b8a2dfcbb40e5151661f8b4313a15b4c085175238b96f3e04a4d9572",
+        "lineCount": 4
+      },
+      "line-rect": {
+        "maskQ16Sha256": "0af13452727156e57aa5ab6160c0a41288f9b18729d6a2fc5fa7ea8144a79cec",
+        "lineCount": 6
+      }
+    }
+  },
+  "legacyCudaRngDiagnostic": [
+    0.1477671281900257,
+    0.31511847535148263,
+    0.8162523994687945,
+    0.7612937679514289
+  ]
+}

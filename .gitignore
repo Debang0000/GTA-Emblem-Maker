@@ -1,0 +1,20 @@
+# Local build and release outputs
+.codex/
+release/
+third_party/cuda-scorer/bin/
+third_party/cuda-scorer/build/
+
+# Native .NET build outputs
+native/**/bin/
+native/**/obj/
+
+# Runtime logs and transient files
+*.log
+*.tmp
+*.rgba
+*.raw
+*.bin
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
