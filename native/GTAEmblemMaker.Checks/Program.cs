@@ -39,6 +39,11 @@ namespace GTAEmblemMaker.Checks
                 CatalogCompatibilityChecks.Run(args[1], args[2], args[3]);
                 return;
             }
+            if (args.Length == 5 && args[0] == "--catalog-checkpoint-check")
+            {
+                CatalogCompatibilityChecks.RunCatalogCheckpoint(args[1], args[2], args[3], args[4]);
+                return;
+            }
             if (args.Length == 2 && args[0] == "--perceptual-check")
             {
                 PerceptualChecks.Run(ProfileCatalog.Load(args[1]).Default);

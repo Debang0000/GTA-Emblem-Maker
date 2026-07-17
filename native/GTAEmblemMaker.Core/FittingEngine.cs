@@ -224,7 +224,7 @@ namespace GTAEmblemMaker.Core
                         if (stage.CatalogSearch != null && layer >= stage.CatalogSearch.FromLayer)
                         {
                             catalogSelection = await CatalogCandidateSearch.SelectAsync(client, stage.CatalogSearch, layer, stage.MinAxis, cancellationToken).ConfigureAwait(false);
-                            candidate = ChooseCodeAwareCandidate(states, candidate, catalogSelection.BestByIdentity, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, payloadBuilder.BudgetCodeLength, baseTotalError);
+                            candidate = ChooseLowestEnergyCandidate(candidate, catalogSelection.BestByIdentity);
                         }
                         PerceptualSelection perceptualSelection = null;
                         var perceptualMilliseconds = 0.0;
@@ -350,26 +350,13 @@ namespace GTAEmblemMaker.Core
             return new FitResult(states, trace, current, payloadBuilder.Build(), budgetReached, baseTotalError, activeChoice.WeightMapId, perceptual == null ? null : perceptual.BackendName);
         }
 
-        private static FitCandidate ChooseCodeAwareCandidate(IReadOnlyList<ShapeState> states, FitCandidate historical, IReadOnlyList<FitCandidate> catalogCandidates, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int currentCodeLength, long baseTotalError)
+        internal static FitCandidate ChooseLowestEnergyCandidate(FitCandidate historical, IReadOnlyList<FitCandidate> catalogCandidates)
         {
-            var choices = new List<FitCandidate>(catalogCandidates.Count + 1) { historical };
-            choices.AddRange(catalogCandidates);
-            var baseEnergy = FitMath.EnergyFromTotal(baseTotalError, Width, Height);
-            FitCandidate best = null;
-            var bestScore = Double.NegativeInfinity;
-            for (var index = 0; index < choices.Count; index++)
+            var best = historical;
+            for (var index = 0; index < catalogCandidates.Count; index++)
             {
-                var candidate = choices[index];
-                var proposal = new List<ShapeState>(states.Count + 1);
-                proposal.AddRange(states);
-                proposal.Add(CandidateGenerator.ToShapeState(candidate));
-                var codeLength = RockstarExporter.Build(proposal, transparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp).GeneratedCodeLength;
-                var score = (baseEnergy - candidate.Energy) / Math.Max(1, codeLength - currentCodeLength);
-                if (score > bestScore || score == bestScore && (best == null || candidate.CandidateId < best.CandidateId))
-                {
-                    best = candidate;
-                    bestScore = score;
-                }
+                var candidate = catalogCandidates[index];
+                if (candidate.Energy < best.Energy) best = candidate;
             }
             return best;
         }

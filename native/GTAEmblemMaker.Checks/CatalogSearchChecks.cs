@@ -8,6 +8,7 @@ namespace GTAEmblemMaker.Checks
     {
         internal static void Run(string scorerPath)
         {
+            Check.Equal(97118015u, CatalogCandidateSearch.ProposalCandidateId(97, 14, 6), "catalog proposal ID matches accepted runner enumeration");
             var target = new byte[512 * 512 * 4];
             for (var y = 160; y < 352; y++)
                 for (var x = 160; x < 352; x++)

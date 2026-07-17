@@ -92,10 +92,10 @@ namespace GTAEmblemMaker.Core
                     if (chain.RemainingAge <= 0 || chain.Steps >= MaxHillSteps) continue;
                     for (var fanout = 0; fanout < Fanout; fanout++)
                     {
-                        proposals.Add(Mutate(chain, checked((uint)(round * 1000 + chain.Group * Fanout + fanout + 1)), minAxis));
+                        proposals.Add(Mutate(chain, ProposalCandidateId(round, chain.Group, fanout), minAxis));
                         owners.Add(chainIndex);
                     }
-                    chain.Steps += Fanout;
+                    chain.Steps++;
                 }
                 if (proposals.Count == 0) break;
                 var scores = (await scorer.ScoreCatalogAsync(atlas, proposals, true, cancellationToken).ConfigureAwait(false)).Scores;
@@ -151,6 +151,14 @@ namespace GTAEmblemMaker.Core
             return candidate;
         }
 
+        internal static uint ProposalCandidateId(int round, int group, int fanoutIndex)
+        {
+            if (round < 1) throw new ArgumentOutOfRangeException("round");
+            if (group < 0 || group >= GroupCount) throw new ArgumentOutOfRangeException("group");
+            if (fanoutIndex < 0 || fanoutIndex >= Fanout) throw new ArgumentOutOfRangeException("fanoutIndex");
+            return checked((uint)((round * 1000 + group * Fanout + fanoutIndex) * 1000 + group + 1));
+        }
+
         private static bool Better(CudaScore left, CudaScore right)
         {
             return left.Energy < right.Energy || left.Energy == right.Energy && left.CandidateId < right.CandidateId;
@@ -189,7 +197,7 @@ namespace GTAEmblemMaker.Core
             internal double Normal()
             {
                 if (hasSpare) { hasSpare = false; return spare; }
-                var u = Math.Max(Double.Epsilon, NextFloat());
+                var u = Math.Max(2.2204460492503131e-16, NextFloat());
                 var v = NextFloat();
                 var radius = Math.Sqrt(-2 * Math.Log(u));
                 spare = radius * Math.Sin(2 * Math.PI * v);
