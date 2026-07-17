@@ -1,9 +1,10 @@
 param(
-  [string]$OutDir = "release\GTAEmblemMaker-v1.0.0",
+  [string]$OutDir = "release\GTAEmblemMaker-v1.1.0",
   [string[]]$ProfilePaths = @(
     "profiles\v1-best-quality.json",
     "profiles\v1-beam-clean.json",
-    "profiles\v1-perceptual.json"
+    "profiles\v1-perceptual.json",
+    "profiles\v1-catalog-quality.json"
   ),
   [switch]$NoBuild
 )
@@ -30,7 +31,7 @@ foreach ($profilePath in $ProfilePaths) {
   $profiles += [pscustomobject]@{ Source = $profileSource; Value = $profile }
   $models[$model] = $modelSource
 }
-if ($profiles.Count -ne 3) { throw "The V1 package requires exactly three profiles." }
+if ($profiles.Count -ne 4) { throw "The V1.1 package requires exactly four profiles." }
 
 if (-not $NoBuild) {
   & (Join-Path $root "third_party\cuda-scorer\build.ps1")
@@ -81,7 +82,7 @@ Copy-Item -LiteralPath (Join-Path $packages "microsoft.ai.directml\1.15.4\LICENS
 GTA Emblem Maker
 
 Run GTAEmblemMaker.exe.
-Pipelines: Best Quality, Beam Clean, Perceptual AlexNet 224.
+Pipelines: Best Quality, Beam Clean, Perceptual AlexNet 224, Official Catalog Quality.
 
 Requires Windows 10 version 1809 or newer, x64, .NET Framework 4.8, and a CUDA-capable NVIDIA GPU.
 Perceptual reranking uses LPIPS v0.1 through ONNX Runtime DirectML.

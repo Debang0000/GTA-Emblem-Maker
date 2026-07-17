@@ -68,6 +68,22 @@ namespace GTAEmblemMaker.Core
         public ulong NewErrorDelta { get; internal set; }
     }
 
+    public sealed class CudaCatalogCandidate
+    {
+        public uint CandidateId { get; set; }
+        public double Cx { get; set; }
+        public double Cy { get; set; }
+        public double Rx { get; set; }
+        public double Ry { get; set; }
+        public int Alpha { get; set; }
+        public float AngleDegrees { get; set; }
+    }
+
+    public sealed class CudaCatalogScoreResult
+    {
+        public IReadOnlyList<CudaScore> Scores { get; internal set; }
+    }
+
     public sealed class CudaChainResult
     {
         public uint ShapeKind { get; internal set; }
@@ -121,6 +137,7 @@ namespace GTAEmblemMaker.Core
         public const int RotatedResponseSize = 188;
         public const int MixedResponsePrefixSize = 196;
         public const int MixedChainSize = 68;
+        public const int CatalogResponsePrefixSize = 40;
 
         public static byte[] CreateInitRequest(int width, int height, ulong baseTotalError, byte[] target, byte[] current)
         {
@@ -186,6 +203,39 @@ namespace GTAEmblemMaker.Core
         public static byte[] CreateShutdownRequest()
         {
             return WriteRequest(writer => writer.Write((uint)4));
+        }
+
+        internal static byte[] CreateCatalogScoreRequest(CatalogMaskAtlasEntry atlas, IReadOnlyList<CudaCatalogCandidate> candidates, bool weighted)
+        {
+            if (atlas == null) throw new ArgumentNullException("atlas");
+            if (candidates == null) throw new ArgumentNullException("candidates");
+            if (candidates.Count == 0 || candidates.Count > MaxInitialCandidateCount) throw new ArgumentOutOfRangeException("candidates");
+            return WriteRequest(writer =>
+            {
+                writer.Write(weighted ? 24u : 23u);
+                writer.Write((uint)candidates.Count);
+                writer.Write((float)atlas.IntrinsicWidth);
+                writer.Write((float)atlas.IntrinsicHeight);
+                writer.Write((float)atlas.MinX);
+                writer.Write((float)atlas.MinY);
+                writer.Write((float)atlas.MaxX);
+                writer.Write((float)atlas.MaxY);
+                writer.Write((uint)atlas.Size);
+                writer.Write(atlas.Mask);
+                for (var index = 0; index < candidates.Count; index++)
+                {
+                    var candidate = candidates[index];
+                    if (candidate == null || candidate.Rx <= 0 || candidate.Ry <= 0 || candidate.Alpha < 1 || candidate.Alpha > 255) throw new ArgumentException("Catalog candidate is invalid.", "candidates");
+                    writer.Write(candidate.CandidateId);
+                    writer.Write(checked((int)Math.Round(candidate.Cx * 10000, MidpointRounding.AwayFromZero)));
+                    writer.Write(checked((int)Math.Round(candidate.Cy * 10000, MidpointRounding.AwayFromZero)));
+                    writer.Write(checked((int)Math.Round(candidate.Rx * 10000, MidpointRounding.AwayFromZero)));
+                    writer.Write(checked((int)Math.Round(candidate.Ry * 10000, MidpointRounding.AwayFromZero)));
+                    writer.Write(candidate.Alpha);
+                    writer.Write(candidate.AngleDegrees);
+                    writer.Write(0u);
+                }
+            });
         }
 
         public static byte[] CreateSelectLayerRequest(CudaSelectLayerRequest request)
@@ -263,6 +313,23 @@ namespace GTAEmblemMaker.Core
                 result.Chains = new ReadOnlyCollection<CudaChainResult>(new List<CudaChainResult>());
                 return result;
             }
+        }
+
+        internal static CudaCatalogScoreResult ParseCatalogScoreResponse(byte[] prefix, byte[] tail, int expectedCount)
+        {
+            RequireLength(prefix, CatalogResponsePrefixSize, "prefix");
+            if (tail == null) throw new ArgumentNullException("tail");
+            if (expectedCount < 0 || tail.Length != checked(expectedCount * 32)) throw new InvalidDataException("Catalog score response length does not match the request.");
+            using (var reader = Reader(prefix))
+            {
+                RequireSuccess("SCORE_BATCH_CATALOG_GEOMETRY", reader.ReadUInt32());
+                var count = reader.ReadUInt32();
+                if (count != expectedCount) throw new InvalidDataException("Catalog score response count does not match the request.");
+                reader.BaseStream.Position += 32;
+            }
+            var scores = new List<CudaScore>(expectedCount);
+            using (var reader = Reader(tail)) for (var index = 0; index < expectedCount; index++) scores.Add(ReadScore(reader));
+            return new CudaCatalogScoreResult { Scores = new ReadOnlyCollection<CudaScore>(scores) };
         }
 
         public static CudaSelectLayerResult ParseMixedResponse(byte[] prefix, byte[] tail)

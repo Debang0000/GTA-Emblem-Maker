@@ -67,7 +67,9 @@ namespace GTAEmblemMaker.Core
         private static string PathLayer(string id, int index, ExportShape shape)
         {
             var values = MatrixValues(shape);
-            return "{\"id\":\"" + id + "\",\"name\":\"" + shape.Definition.Name + "\",\"type\":\"path\",\"y\":" + FormatNumber(shape.Y) + ",\"x\":" + FormatNumber(shape.X) + ",\"scaleY\":" + FormatNumber(values.ScaleY * 100) + ",\"scaleX\":" + FormatNumber(values.ScaleX * 100) + ",\"invertedY\":false,\"invertedX\":false,\"rotation\":" + FormatNumber(shape.Rotation) + ",\"opacity\":" + FormatNumber(Math.Max(0, Math.Min(255, shape.Alpha)) / 255.0 * 100) + ",\"index\":" + index.ToString(CultureInfo.InvariantCulture) + ",\"color\":\"" + shape.Color + "\",\"isFilled\":true,\"internal\":false,\"locked\":false,\"tBold\":false,\"tItalic\":false,\"fontFamily\":null,\"borderColor\":\"#a1a1a1\",\"borderSize\":0,\"gradientStyle\":\"Fill\",\"slug\":\"" + shape.Definition.Slug + "\",\"width\":" + FormatNumber(shape.Definition.Width) + ",\"height\":" + FormatNumber(shape.Definition.Height) + "}";
+            var x = shape.UsesIntrinsicAnchor ? shape.X + (shape.Width - shape.Definition.Width) / 2 : shape.X;
+            var y = shape.UsesIntrinsicAnchor ? shape.Y + (shape.Height - shape.Definition.Height) / 2 : shape.Y;
+            return "{\"id\":\"" + id + "\",\"name\":\"" + shape.Definition.Name + "\",\"type\":\"path\",\"y\":" + FormatNumber(y) + ",\"x\":" + FormatNumber(x) + ",\"scaleY\":" + FormatNumber(values.ScaleY * 100) + ",\"scaleX\":" + FormatNumber(values.ScaleX * 100) + ",\"invertedY\":false,\"invertedX\":false,\"rotation\":" + FormatNumber(shape.Rotation) + ",\"opacity\":" + FormatNumber(Math.Max(0, Math.Min(255, shape.Alpha)) / 255.0 * 100) + ",\"index\":" + index.ToString(CultureInfo.InvariantCulture) + ",\"color\":\"" + shape.Color + "\",\"isFilled\":true,\"internal\":false,\"locked\":false,\"tBold\":false,\"tItalic\":false,\"fontFamily\":null,\"borderColor\":\"#a1a1a1\",\"borderSize\":0,\"gradientStyle\":\"Fill\",\"slug\":\"" + shape.Definition.Slug + "\",\"width\":" + FormatNumber(shape.Definition.Width) + ",\"height\":" + FormatNumber(shape.Definition.Height) + "}";
         }
 
         private static string Matrix(ExportShape shape)
@@ -81,13 +83,26 @@ namespace GTAEmblemMaker.Core
             var scaleX = shape.Width / shape.Definition.Width;
             var scaleY = shape.Height / shape.Definition.Height;
             var radians = shape.Rotation * Math.PI / 180;
-            var a = Round5(Math.Cos(radians) * scaleX);
-            var b = Round5(Math.Sin(radians) * scaleX);
-            var c = Round5(-Math.Sin(radians) * scaleY);
-            var d = Round5(Math.Cos(radians) * scaleY);
-            var e = Round5(shape.X + shape.Width / 2 - a * shape.Definition.Width / 2 - c * shape.Definition.Height / 2);
-            var f = Round5(shape.Y + shape.Height / 2 - b * shape.Definition.Width / 2 - d * shape.Definition.Height / 2);
+            var rawA = Math.Cos(radians) * scaleX;
+            var rawB = Math.Sin(radians) * scaleX;
+            var rawC = -Math.Sin(radians) * scaleY;
+            var rawD = Math.Cos(radians) * scaleY;
+            var a = shape.UsesIntrinsicAnchor ? Round4(rawA) : Round5(rawA);
+            var b = shape.UsesIntrinsicAnchor ? Round4(rawB) : Round5(rawB);
+            var c = shape.UsesIntrinsicAnchor ? Round4(rawC) : Round5(rawC);
+            var d = shape.UsesIntrinsicAnchor ? Round4(rawD) : Round5(rawD);
+            var e = shape.UsesIntrinsicAnchor
+                ? Round4(shape.X + shape.Width / 2 - rawA * shape.Definition.Width / 2 - rawC * shape.Definition.Height / 2)
+                : Round5(shape.X + shape.Width / 2 - a * shape.Definition.Width / 2 - c * shape.Definition.Height / 2);
+            var f = shape.UsesIntrinsicAnchor
+                ? Round4(shape.Y + shape.Height / 2 - rawB * shape.Definition.Width / 2 - rawD * shape.Definition.Height / 2)
+                : Round5(shape.Y + shape.Height / 2 - b * shape.Definition.Width / 2 - d * shape.Definition.Height / 2);
             return new MatrixState(scaleX, scaleY, a, b, c, d, e, f);
+        }
+
+        private static double Round4(double value)
+        {
+            return Math.Round(value, 4, MidpointRounding.AwayFromZero);
         }
 
         private static double Round5(double value)

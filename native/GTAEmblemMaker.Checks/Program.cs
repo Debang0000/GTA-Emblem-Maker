@@ -41,10 +41,10 @@ namespace GTAEmblemMaker.Checks
                 RunFormalFit(args);
                 return;
             }
-            Check.Equal("1.0.0", EngineInfo.Version, "engine version");
+            Check.Equal("1.1.0", EngineInfo.Version, "engine version");
 
             var catalog = ProfileCatalog.Load(ProfileFolder());
-            Check.Equal(3, catalog.Profiles.Count, "production profile count");
+            Check.Equal(4, catalog.Profiles.Count, "production profile count");
             Check.Equal("v1-best-quality", catalog.Default.Id, "default profile");
             Check.Equal("Best Quality", catalog.Default.DisplayName, "default profile display name");
             Check.Equal(1250000, catalog.Default.Stages[0].Budget, "production budget");
@@ -61,17 +61,24 @@ namespace GTAEmblemMaker.Checks
             CheckImages();
             CheckRockstarExport();
             CheckRockstarExportReviewCases();
+            OfficialCatalogCurveChecks.Run();
+            OfficialCatalogRoundChecks.Run();
+            CatalogMaskAtlasChecks.Run();
+            CatalogGpuChecks.Run(Path.Combine(ProjectRoot(), "third_party", "cuda-scorer", "bin", "cuda-scorer.exe"));
+            CatalogSearchChecks.Run(Path.Combine(ProjectRoot(), "third_party", "cuda-scorer", "bin", "cuda-scorer.exe"));
             FitMathChecks.Run(catalog.Default);
             CudaProtocolChecks.Run();
             PerceptualChecks.Run(catalog.Default);
             FitProfile bestQualityProfile = null;
             FitProfile beamCleanProfile = null;
             FitProfile perceptualProfile = null;
+            FitProfile catalogProfile = null;
             for (var profileIndex = 0; profileIndex < catalog.Profiles.Count; profileIndex++)
             {
                 if (catalog.Profiles[profileIndex].Id == "v1-best-quality") bestQualityProfile = catalog.Profiles[profileIndex];
                 if (catalog.Profiles[profileIndex].Id == "v1-beam-clean") beamCleanProfile = catalog.Profiles[profileIndex];
                 if (catalog.Profiles[profileIndex].Id == "v1-perceptual") perceptualProfile = catalog.Profiles[profileIndex];
+                if (catalog.Profiles[profileIndex].Id == "v1-catalog-quality") catalogProfile = catalog.Profiles[profileIndex];
             }
             Check.True(bestQualityProfile != null, "best quality profile available");
             Check.Equal("beam-pair", bestQualityProfile.Pipeline.Runner, "best quality runner");
@@ -83,6 +90,13 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(2, beamCleanProfile.Pipeline.BranchFactor, "beam clean branch factor");
             Check.True(perceptualProfile != null, "perceptual profile available");
             Check.Equal("greedy", perceptualProfile.Pipeline.Runner, "perceptual runner");
+            Check.True(catalogProfile != null, "official catalog profile available");
+            Check.Equal("greedy", catalogProfile.Pipeline.Runner, "official catalog runner");
+            Check.Equal(11, catalogProfile.Stages[0].CatalogSearch.Identities.Count, "official catalog identity count");
+            Check.Equal(501, catalogProfile.Stages[0].CatalogSearch.FromLayer, "official catalog first layer");
+            Check.Equal(512, catalogProfile.Stages[0].CatalogSearch.CandidatesPerGroup, "official catalog candidate quota");
+            Check.Equal(1001, catalogProfile.Stages[0].PerceptualRerank.FirstRerankLayer, "official catalog AlexNet boundary");
+            CatalogSearchChecks.CheckPerceptualPool(catalogProfile);
             FittingEngineChecks.Run(perceptualProfile, beamCleanProfile, bestQualityProfile);
         }
 
@@ -289,7 +303,7 @@ namespace GTAEmblemMaker.Checks
             }
         }
 
-        private static Dictionary<string, object>[] DecodeLayers(string consoleCode)
+        internal static Dictionary<string, object>[] DecodeLayers(string consoleCode)
         {
             var json = DecodeLayerJson(consoleCode);
             Type serializerType = null;

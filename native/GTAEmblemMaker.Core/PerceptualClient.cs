@@ -224,7 +224,7 @@ namespace GTAEmblemMaker.Core
             return layer % Math.Max(1, every) == 0;
         }
 
-        internal static async Task<PerceptualSelection> SelectAsync(PerceptualClient client, PerceptualRerank config, byte[] target, byte[] current, IReadOnlyList<CudaChainResult> chains, FitCandidate mseBest, CancellationToken cancellationToken)
+        internal static async Task<PerceptualSelection> SelectAsync(PerceptualClient client, PerceptualRerank config, byte[] target, byte[] current, IReadOnlyList<CudaChainResult> chains, FitCandidate mseBest, CancellationToken cancellationToken, IReadOnlyList<FitCandidate> extraCandidates = null)
         {
             if (client == null) throw new ArgumentNullException("client");
             if (config == null) throw new ArgumentNullException("config");
@@ -236,6 +236,7 @@ namespace GTAEmblemMaker.Core
                 var chain = chains[index];
                 all.Add(CandidateGenerator.FromResidentResult(chain.ShapeKind, chain.Candidate, chain.Score));
             }
+            if (extraCandidates != null) all.AddRange(extraCandidates);
             var candidates = SelectCandidates(all, config);
             if (candidates.Count == 0) return new PerceptualSelection(mseBest, false, Double.PositiveInfinity);
 
@@ -286,7 +287,7 @@ namespace GTAEmblemMaker.Core
             return new PerceptualSelection(selected, CandidateKey(selected) != CandidateKey(mseBest), MeanScore(totals, selected));
         }
 
-        private static List<FitCandidate> SelectCandidates(List<FitCandidate> all, PerceptualRerank config)
+        internal static List<FitCandidate> SelectCandidates(List<FitCandidate> all, PerceptualRerank config)
         {
             var sorted = all.OrderBy(candidate => candidate.Energy).ThenBy(candidate => candidate.PoolShapeFamily, StringComparer.Ordinal).ThenBy(candidate => candidate.CandidateId).ToList();
             if (!config.ShapeBalanced) return sorted.Take(config.TopK).ToList();
@@ -300,7 +301,17 @@ namespace GTAEmblemMaker.Core
                     if (keys.Add(CandidateKey(candidate))) selected.Add(candidate);
                 }
             }
-            return selected.Take(config.TopK).ToList();
+            var catalogFamilies = sorted.Select(candidate => candidate.PoolShapeFamily).Where(family => !ShapeFamilies.Contains(family)).Distinct(StringComparer.Ordinal).OrderBy(family => family, StringComparer.Ordinal).ToList();
+            foreach (var family in catalogFamilies)
+            {
+                foreach (var candidate in sorted.Where(item => item.PoolShapeFamily == family).Take(config.EachTopK))
+                {
+                    if (keys.Add(CandidateKey(candidate))) selected.Add(candidate);
+                }
+            }
+            return catalogFamilies.Count == 0
+                ? selected.Take(config.TopK).ToList()
+                : selected.OrderBy(candidate => candidate.Energy).ThenBy(candidate => candidate.PoolShapeFamily, StringComparer.Ordinal).ThenBy(candidate => candidate.CandidateId).Take(config.TopK).ToList();
         }
 
         private static Dictionary<FitCandidate, int> Ranks(List<FitCandidate> candidates, Func<FitCandidate, double> score)

@@ -71,8 +71,9 @@ namespace GTAEmblemMaker.Core
         public int Alpha { get; private set; }
         public double Rotation { get; private set; }
         public string Color { get; private set; }
+        public bool UsesIntrinsicAnchor { get; private set; }
 
-        public ExportShape(ShapeDefinition definition, double x, double y, double width, double height, int alpha, double rotation, string color)
+        public ExportShape(ShapeDefinition definition, double x, double y, double width, double height, int alpha, double rotation, string color, bool usesIntrinsicAnchor)
         {
             Definition = definition;
             X = x;
@@ -82,6 +83,7 @@ namespace GTAEmblemMaker.Core
             Alpha = alpha;
             Rotation = rotation;
             Color = color;
+            UsesIntrinsicAnchor = usesIntrinsicAnchor;
         }
     }
 
@@ -119,7 +121,9 @@ namespace GTAEmblemMaker.Core
 
         internal static ExportShape ToExportShape(ShapeState state)
         {
-            var definition = DefinitionFor(state.Shape);
+            ShapeDefinition definition;
+            var usesIntrinsicAnchor = OfficialCatalog.TryGetDefinition(state.Shape, out definition);
+            if (!usesIntrinsicAnchor) definition = DefinitionFor(state.Shape);
             var rx = Math.Max(state.Rx, MinEllipseAxis);
             var ry = Math.Max(state.Ry, MinEllipseAxis);
             var alpha = state.Alpha;
@@ -128,7 +132,7 @@ namespace GTAEmblemMaker.Core
                 alpha = Math.Max(1, ClampByte((int)Math.Floor(state.Alpha * state.Rx * state.Ry / (rx * ry) + 0.5)));
             }
 
-            return new ExportShape(definition, state.Cx - rx, state.Cy - ry, rx * 2, ry * 2, alpha, state.AngleDegrees, RgbHex(state.Red, state.Green, state.Blue));
+            return new ExportShape(definition, state.Cx - rx, state.Cy - ry, rx * 2, ry * 2, alpha, state.AngleDegrees, RgbHex(state.Red, state.Green, state.Blue), usesIntrinsicAnchor);
         }
 
         private static ShapeDefinition DefinitionFor(string shape)
@@ -140,7 +144,8 @@ namespace GTAEmblemMaker.Core
 
         internal static bool IsKnownShape(string shape)
         {
-            return shape == "rotated" || shape == "ellipse" || shape == "circle" || shape == "round" || shape == "rotated-triangle" || shape == "triangle" || shape == "rotated-rect" || shape == "rectangle" || shape == "line-rect";
+            ShapeDefinition definition;
+            return shape == "rotated" || shape == "ellipse" || shape == "circle" || shape == "round" || shape == "rotated-triangle" || shape == "triangle" || shape == "rotated-rect" || shape == "rectangle" || shape == "line-rect" || OfficialCatalog.TryGetDefinition(shape, out definition);
         }
 
         private static string RgbHex(int red, int green, int blue)

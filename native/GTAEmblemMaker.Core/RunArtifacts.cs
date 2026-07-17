@@ -180,38 +180,48 @@ namespace GTAEmblemMaker.Core
             var info = new SKImageInfo(512, 512, SKColorType.Rgba8888, SKAlphaType.Premul);
             using (var bitmap = new SKBitmap(info))
             using (var canvas = new SKCanvas(bitmap))
-            using (var round = SKPath.ParseSvgPathData(GTAEmblemMaker.Core.Shapes.Round01.Path))
-            using (var triangle = SKPath.ParseSvgPathData(GTAEmblemMaker.Core.Shapes.Angle01.Path))
-            using (var rectangle = SKPath.ParseSvgPathData(GTAEmblemMaker.Core.Shapes.Rectangle21.Path))
             using (var paint = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill })
             {
-                canvas.Clear(BackgroundColor(payload.BackgroundColor));
-                for (var index = 0; index < shapes.Count; index++)
+                var paths = new Dictionary<string, SKPath>(StringComparer.Ordinal);
+                try
                 {
-                    var state = shapes[index];
-                    var export = GTAEmblemMaker.Core.Shapes.ToExportShape(state);
-                    var values = RockstarExporter.MatrixValues(export);
-                    var matrix = new SKMatrix
+                    canvas.Clear(BackgroundColor(payload.BackgroundColor));
+                    for (var index = 0; index < shapes.Count; index++)
                     {
-                        ScaleX = (float)values.A,
-                        SkewX = (float)values.C,
-                        TransX = (float)values.E,
-                        SkewY = (float)values.B,
-                        ScaleY = (float)values.D,
-                        TransY = (float)values.F,
-                        Persp2 = 1
-                    };
-                    paint.Color = new SKColor((byte)state.Red, (byte)state.Green, (byte)state.Blue, (byte)export.Alpha);
-                    var path = export.Definition == GTAEmblemMaker.Core.Shapes.Round01 ? round : export.Definition == GTAEmblemMaker.Core.Shapes.Angle01 ? triangle : rectangle;
-                    canvas.Save();
-                    canvas.Concat(matrix);
-                    canvas.DrawPath(path, paint);
-                    canvas.Restore();
+                        var state = shapes[index];
+                        var export = GTAEmblemMaker.Core.Shapes.ToExportShape(state);
+                        var values = RockstarExporter.MatrixValues(export);
+                        var matrix = new SKMatrix
+                        {
+                            ScaleX = (float)values.A,
+                            SkewX = (float)values.C,
+                            TransX = (float)values.E,
+                            SkewY = (float)values.B,
+                            ScaleY = (float)values.D,
+                            TransY = (float)values.F,
+                            Persp2 = 1
+                        };
+                        paint.Color = new SKColor((byte)state.Red, (byte)state.Green, (byte)state.Blue, (byte)export.Alpha);
+                        SKPath path;
+                        if (!paths.TryGetValue(export.Definition.Slug, out path))
+                        {
+                            path = SKPath.ParseSvgPathData(export.Definition.Path);
+                            paths.Add(export.Definition.Slug, path);
+                        }
+                        canvas.Save();
+                        canvas.Concat(matrix);
+                        canvas.DrawPath(path, paint);
+                        canvas.Restore();
+                    }
+                    canvas.Flush();
+                    var rgba = new byte[info.BytesSize];
+                    Marshal.Copy(bitmap.GetPixels(), rgba, 0, rgba.Length);
+                    return rgba;
                 }
-                canvas.Flush();
-                var rgba = new byte[info.BytesSize];
-                Marshal.Copy(bitmap.GetPixels(), rgba, 0, rgba.Length);
-                return rgba;
+                finally
+                {
+                    foreach (var path in paths.Values) path.Dispose();
+                }
             }
         }
 

@@ -405,6 +405,7 @@ namespace GTAEmblemMaker.Core
             if (candidate == null) throw new ArgumentNullException("candidate");
             if (width <= 0) throw new ArgumentOutOfRangeException("width");
             if (height <= 0) throw new ArgumentOutOfRangeException("height");
+            if (candidate.Kind == CandidateShapeKind.OfficialCatalog) return RasterizeCatalog(candidate, width, height);
             var lines = new List<RasterLine>();
             var theta = candidate.AngleDegrees * Math.PI / 180;
             var cos = Math.Cos(theta);
@@ -433,6 +434,31 @@ namespace GTAEmblemMaker.Core
                     }
                 }
                 if (runStart >= 0) lines.Add(new RasterLine(y, runStart, maxX, UInt16.MaxValue));
+            }
+            return lines;
+        }
+
+        private static IReadOnlyList<RasterLine> RasterizeCatalog(FitCandidate candidate, int width, int height)
+        {
+            if (width != 512 || height != 512) throw new ArgumentException("Official catalog rasterization requires the Rockstar 512x512 canvas.");
+            var entry = CatalogMaskAtlas.Find(candidate.Shape);
+            var state = CandidateGenerator.ToShapeState(candidate);
+            var alpha = CatalogMaskAtlas.RenderBinaryAlpha(entry, state);
+            var lines = new List<RasterLine>();
+            for (var y = 0; y < height; y++)
+            {
+                var runStart = -1;
+                for (var x = 0; x < width; x++)
+                {
+                    var filled = alpha[y * width + x] >= 128;
+                    if (filled && runStart < 0) runStart = x;
+                    if (!filled && runStart >= 0)
+                    {
+                        lines.Add(new RasterLine(y, runStart, x - 1, UInt16.MaxValue));
+                        runStart = -1;
+                    }
+                }
+                if (runStart >= 0) lines.Add(new RasterLine(y, runStart, width - 1, UInt16.MaxValue));
             }
             return lines;
         }

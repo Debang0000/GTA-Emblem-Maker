@@ -133,7 +133,7 @@ namespace GTAEmblemMaker.Core
 
         private static FitStage ReadStage(Dictionary<string, object> value)
         {
-            EnsureFieldsWithOptional(value, "stage", new[] { "layerOptimization", "strokeSearch" }, "id", "maxLayers", "budget", "minAxis", "residentSelectLayer", "residentSelection", "residentDeviceChunk", "residentDeviceChunkRounds", "shapeChoicesByLayer", "opaqueWeightMapSchedule", "transparentWeightMapSchedule", "perceptualRerank");
+            EnsureFieldsWithOptional(value, "stage", new[] { "layerOptimization", "strokeSearch", "catalogSearch" }, "id", "maxLayers", "budget", "minAxis", "residentSelectLayer", "residentSelection", "residentDeviceChunk", "residentDeviceChunkRounds", "shapeChoicesByLayer", "opaqueWeightMapSchedule", "transparentWeightMapSchedule", "perceptualRerank");
             var id = RequiredString(value, "id", "stage");
             var maxLayers = RequiredInt(value, "maxLayers", "stage");
             var budget = RequiredInt(value, "budget", "stage");
@@ -162,7 +162,29 @@ namespace GTAEmblemMaker.Core
                     : new LayerOptimization(0, 0, 2, 0, 64, 0.5),
                 value.ContainsKey("strokeSearch")
                     ? ReadStrokeSearch(RequiredObject(value["strokeSearch"], "strokeSearch"), maxLayers, minAxis)
+                    : null,
+                value.ContainsKey("catalogSearch")
+                    ? ReadCatalogSearch(RequiredObject(value["catalogSearch"], "catalogSearch"), maxLayers)
                     : null);
+        }
+
+        private static CatalogSearch ReadCatalogSearch(Dictionary<string, object> value, int maxLayers)
+        {
+            EnsureFields(value, "catalogSearch", "fromLayer", "candidatesPerGroup", "identities");
+            var fromLayer = RequiredInt(value, "fromLayer", "catalogSearch");
+            var candidatesPerGroup = RequiredInt(value, "candidatesPerGroup", "catalogSearch");
+            if (fromLayer < 1 || fromLayer > maxLayers || candidatesPerGroup < 1 || candidatesPerGroup > 2048) throw new ProfileValidationException("Catalog search range is invalid.");
+            var identities = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in RequiredArray(value, "identities", "catalogSearch"))
+            {
+                var identity = item as string;
+                ShapeDefinition definition;
+                if (identity == null || !OfficialCatalog.TryGetDefinition(identity, out definition) || !seen.Add(identity)) throw new ProfileValidationException("Invalid catalog search identity.");
+                identities.Add(identity);
+            }
+            if (identities.Count == 0) throw new ProfileValidationException("Catalog search requires at least one identity.");
+            return new CatalogSearch(fromLayer, candidatesPerGroup, identities);
         }
 
         private static StrokeSearch ReadStrokeSearch(Dictionary<string, object> value, int maxLayers, int stageMinAxis)
@@ -469,8 +491,9 @@ namespace GTAEmblemMaker.Core
         public PerceptualRerank PerceptualRerank { get; private set; }
         public LayerOptimization LayerOptimization { get; private set; }
         public StrokeSearch StrokeSearch { get; private set; }
+        public CatalogSearch CatalogSearch { get; private set; }
 
-        internal FitStage(string id, int maxLayers, int budget, int minAxis, bool residentSelectLayer, string residentSelection, bool residentDeviceChunk, int residentDeviceChunkRounds, List<ShapeChoice> shapeChoicesByLayer, List<WeightMapChoice> opaqueWeightMapSchedule, List<WeightMapChoice> transparentWeightMapSchedule, PerceptualRerank perceptualRerank, LayerOptimization layerOptimization, StrokeSearch strokeSearch)
+        internal FitStage(string id, int maxLayers, int budget, int minAxis, bool residentSelectLayer, string residentSelection, bool residentDeviceChunk, int residentDeviceChunkRounds, List<ShapeChoice> shapeChoicesByLayer, List<WeightMapChoice> opaqueWeightMapSchedule, List<WeightMapChoice> transparentWeightMapSchedule, PerceptualRerank perceptualRerank, LayerOptimization layerOptimization, StrokeSearch strokeSearch, CatalogSearch catalogSearch)
         {
             Id = id;
             MaxLayers = maxLayers;
@@ -486,6 +509,21 @@ namespace GTAEmblemMaker.Core
             PerceptualRerank = perceptualRerank;
             LayerOptimization = layerOptimization;
             StrokeSearch = strokeSearch;
+            CatalogSearch = catalogSearch;
+        }
+    }
+
+    public sealed class CatalogSearch
+    {
+        public int FromLayer { get; private set; }
+        public int CandidatesPerGroup { get; private set; }
+        public IReadOnlyList<string> Identities { get; private set; }
+
+        internal CatalogSearch(int fromLayer, int candidatesPerGroup, List<string> identities)
+        {
+            FromLayer = fromLayer;
+            CandidatesPerGroup = candidatesPerGroup;
+            Identities = new ReadOnlyCollection<string>(identities);
         }
     }
 

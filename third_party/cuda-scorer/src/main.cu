@@ -54,6 +54,8 @@ enum ServerCommand : std::uint32_t {
     CMD_SET_MULTI_SCALE_STROKE_GUIDE = 20,
     CMD_SET_STRUCTURAL_GUIDE = 21,
     CMD_RESIDENT_SELECT_LAYER_STRUCTURAL_DEVICE_CHUNK = 22,
+    CMD_SCORE_BATCH_CATALOG_GEOMETRY = 23,
+    CMD_SCORE_BATCH_CATALOG_GEOMETRY_WEIGHTED = 24,
 };
 
 constexpr int GEOMETRY_ELLIPSE = 0;
@@ -63,6 +65,17 @@ constexpr int GEOMETRY_LINE_RECTANGLE = 3;
 constexpr int GEOMETRY_RUNTIME = -1;
 constexpr int GEOMETRY_KIND_COUNT = 4;
 constexpr int RESIDENT_DEVICE_FANOUT_MAX = 8;
+constexpr double CATALOG_GEOMETRY_SCALE = 10000.0;
+
+struct CatalogMaskMetadata {
+    float intrinsicWidth;
+    float intrinsicHeight;
+    float minX;
+    float minY;
+    float maxX;
+    float maxY;
+    std::uint32_t size;
+};
 
 static bool check(cudaError_t err, const char* step) {
     if (err == cudaSuccess) {
@@ -801,6 +814,174 @@ __global__ void score_batch_rotated_geometry_weighted_kernel(
         record.oldErrorDelta = old_error[0];
         record.newErrorDelta = new_error[0];
         const double total = static_cast<double>(baseTotalError - old_error[0] + new_error[0]);
+        record.energy = sqrt(total / static_cast<double>(width * height * 4)) / 255.0;
+        output[blockIdx.x] = record;
+    }
+}
+
+__device__ bool catalog_mask_contains(
+    const RotatedCandidateRecord& candidate,
+    int x,
+    int y,
+    double cosine,
+    double sine,
+    const std::uint8_t* mask,
+    CatalogMaskMetadata metadata) {
+    const double rx = static_cast<double>(candidate.rx) / CATALOG_GEOMETRY_SCALE;
+    const double ry = static_cast<double>(candidate.ry) / CATALOG_GEOMETRY_SCALE;
+    const double dx = static_cast<double>(x) - static_cast<double>(candidate.cx) / CATALOG_GEOMETRY_SCALE;
+    const double dy = static_cast<double>(y) - static_cast<double>(candidate.cy) / CATALOG_GEOMETRY_SCALE;
+    const double local_x = cosine * dx + sine * dy;
+    const double local_y = -sine * dx + cosine * dy;
+    const double path_x = (local_x / (2.0 * rx) + 0.5) * metadata.intrinsicWidth;
+    const double path_y = (local_y / (2.0 * ry) + 0.5) * metadata.intrinsicHeight;
+    if (path_x < metadata.minX || path_x > metadata.maxX || path_y < metadata.minY || path_y > metadata.maxY) return false;
+    const double mask_width = static_cast<double>(metadata.maxX - metadata.minX);
+    const double mask_height = static_cast<double>(metadata.maxY - metadata.minY);
+    const int atlas_x = min(static_cast<int>(metadata.size) - 1, max(0, static_cast<int>(floor((path_x - metadata.minX) / mask_width * metadata.size))));
+    const int atlas_y = min(static_cast<int>(metadata.size) - 1, max(0, static_cast<int>(floor((path_y - metadata.minY) / mask_height * metadata.size))));
+    return mask[atlas_y * metadata.size + atlas_x] >= 128;
+}
+
+__global__ void score_batch_catalog_geometry_kernel(
+    const std::uint8_t* target,
+    const std::uint8_t* current,
+    const std::uint16_t* weights,
+    const RotatedCandidateRecord* candidates,
+    ScoreRecord* output,
+    int width,
+    int height,
+    std::uint64_t base_total_error,
+    const std::uint8_t* mask,
+    CatalogMaskMetadata metadata) {
+    const int tid = threadIdx.x;
+    const RotatedCandidateRecord candidate = candidates[blockIdx.x];
+    __shared__ long long rsum[256];
+    __shared__ long long gsum[256];
+    __shared__ long long bsum[256];
+    __shared__ long long weight_sum[256];
+    __shared__ unsigned long long old_error[256];
+    __shared__ unsigned long long new_error[256];
+    __shared__ int color_r;
+    __shared__ int color_g;
+    __shared__ int color_b;
+
+    const double theta = static_cast<double>(candidate.angleDegrees) * 0.01745329251994329577;
+    const double cosine = cos(theta);
+    const double sine = sin(theta);
+    const double center_x = static_cast<double>(candidate.cx) / CATALOG_GEOMETRY_SCALE;
+    const double center_y = static_cast<double>(candidate.cy) / CATALOG_GEOMETRY_SCALE;
+    const double rx = static_cast<double>(candidate.rx) / CATALOG_GEOMETRY_SCALE;
+    const double ry = static_cast<double>(candidate.ry) / CATALOG_GEOMETRY_SCALE;
+    const double extent_local_x = max(fabs((2.0 * metadata.minX / metadata.intrinsicWidth - 1.0) * rx), fabs((2.0 * metadata.maxX / metadata.intrinsicWidth - 1.0) * rx));
+    const double extent_local_y = max(fabs((2.0 * metadata.minY / metadata.intrinsicHeight - 1.0) * ry), fabs((2.0 * metadata.maxY / metadata.intrinsicHeight - 1.0) * ry));
+    const int extent_x = static_cast<int>(ceil(fabs(extent_local_x * cosine) + fabs(extent_local_y * sine))) + 1;
+    const int extent_y = static_cast<int>(ceil(fabs(extent_local_x * sine) + fabs(extent_local_y * cosine))) + 1;
+    const int min_x = max(0, static_cast<int>(floor(center_x - extent_x)));
+    const int max_x = min(width - 1, static_cast<int>(ceil(center_x + extent_x)));
+    const int min_y = max(0, static_cast<int>(floor(center_y - extent_y)));
+    const int max_y = min(height - 1, static_cast<int>(ceil(center_y + extent_y)));
+    const int box_width = max_x >= min_x ? max_x - min_x + 1 : 0;
+    const int box_height = max_y >= min_y ? max_y - min_y + 1 : 0;
+    const int pixel_count = box_width * box_height;
+
+    long long local_r = 0;
+    long long local_g = 0;
+    long long local_b = 0;
+    long long local_weight = 0;
+    unsigned long long local_old = 0;
+    const int color_scale = 0x101 * 255 / candidate.alpha;
+    for (int index = tid; index < pixel_count; index += blockDim.x) {
+        const int x = min_x + index % box_width;
+        const int y = min_y + index / box_width;
+        if (!catalog_mask_contains(candidate, x, y, cosine, sine, mask, metadata)) continue;
+        const int pixel = y * width + x;
+        const int offset = pixel * 4;
+        const int weight = weights ? weights[pixel] : 256;
+        const int tr = target[offset + 0];
+        const int tg = target[offset + 1];
+        const int tb = target[offset + 2];
+        const int ta = target[offset + 3];
+        const int cr = current[offset + 0];
+        const int cg = current[offset + 1];
+        const int cb = current[offset + 2];
+        const int ca = current[offset + 3];
+        const int dr = tr - cr;
+        const int dg = tg - cg;
+        const int db = tb - cb;
+        const int da = ta - ca;
+        local_r += static_cast<long long>(((tr - cr) * color_scale + cr * 0x101) * weight);
+        local_g += static_cast<long long>(((tg - cg) * color_scale + cg * 0x101) * weight);
+        local_b += static_cast<long long>(((tb - cb) * color_scale + cb * 0x101) * weight);
+        local_old += static_cast<unsigned long long>(dr * dr + dg * dg + db * db + da * da) * weight / 256;
+        local_weight += weight;
+    }
+
+    rsum[tid] = local_r;
+    gsum[tid] = local_g;
+    bsum[tid] = local_b;
+    weight_sum[tid] = local_weight;
+    old_error[tid] = local_old;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride) {
+            rsum[tid] += rsum[tid + stride];
+            gsum[tid] += gsum[tid + stride];
+            bsum[tid] += bsum[tid + stride];
+            weight_sum[tid] += weight_sum[tid + stride];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        color_r = weight_sum[0] == 0 ? 0 : clamp_channel(static_cast<int>(rsum[0] / weight_sum[0]) >> 8);
+        color_g = weight_sum[0] == 0 ? 0 : clamp_channel(static_cast<int>(gsum[0] / weight_sum[0]) >> 8);
+        color_b = weight_sum[0] == 0 ? 0 : clamp_channel(static_cast<int>(bsum[0] / weight_sum[0]) >> 8);
+    }
+    __syncthreads();
+
+    const unsigned int m = 0xffff;
+    const unsigned int alpha16 = static_cast<unsigned int>(candidate.alpha) * 0x101;
+    const unsigned int blend = (m - alpha16) * 0x101;
+    const unsigned int sr = static_cast<unsigned int>((static_cast<unsigned long long>(color_r) * 0x101 * candidate.alpha) / 255);
+    const unsigned int sg = static_cast<unsigned int>((static_cast<unsigned long long>(color_g) * 0x101 * candidate.alpha) / 255);
+    const unsigned int sb = static_cast<unsigned int>((static_cast<unsigned long long>(color_b) * 0x101 * candidate.alpha) / 255);
+    unsigned long long local_new = 0;
+    for (int index = tid; index < pixel_count; index += blockDim.x) {
+        const int x = min_x + index % box_width;
+        const int y = min_y + index / box_width;
+        if (!catalog_mask_contains(candidate, x, y, cosine, sine, mask, metadata)) continue;
+        const int pixel = y * width + x;
+        const int offset = pixel * 4;
+        const int weight = weights ? weights[pixel] : 256;
+        const int ar = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 0]) * blend + static_cast<unsigned long long>(sr) * m) / m) >> 8));
+        const int ag = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 1]) * blend + static_cast<unsigned long long>(sg) * m) / m) >> 8));
+        const int ab = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 2]) * blend + static_cast<unsigned long long>(sb) * m) / m) >> 8));
+        const int aa = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 3]) * blend + static_cast<unsigned long long>(alpha16) * m) / m) >> 8));
+        const int dr = target[offset + 0] - ar;
+        const int dg = target[offset + 1] - ag;
+        const int db = target[offset + 2] - ab;
+        const int da = target[offset + 3] - aa;
+        local_new += static_cast<unsigned long long>(dr * dr + dg * dg + db * db + da * da) * weight / 256;
+    }
+    new_error[tid] = local_new;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride) {
+            old_error[tid] += old_error[tid + stride];
+            new_error[tid] += new_error[tid + stride];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        ScoreRecord record{};
+        record.candidateId = candidate.candidateId;
+        record.r = static_cast<std::uint8_t>(color_r);
+        record.g = static_cast<std::uint8_t>(color_g);
+        record.b = static_cast<std::uint8_t>(color_b);
+        record.a = static_cast<std::uint8_t>(candidate.alpha);
+        record.oldErrorDelta = old_error[0];
+        record.newErrorDelta = new_error[0];
+        const double total = static_cast<double>(base_total_error - old_error[0] + new_error[0]);
         record.energy = sqrt(total / static_cast<double>(width * height * 4)) / 255.0;
         output[blockIdx.x] = record;
     }
@@ -1548,6 +1729,44 @@ static float run_score_rotated_geometry_weighted_kernel(
     return kernel_ms;
 }
 
+static float run_score_catalog_geometry_kernel(
+    const std::uint8_t* d_target,
+    const std::uint8_t* d_current,
+    const std::uint16_t* d_weights,
+    const RotatedCandidateRecord* d_candidates,
+    ScoreRecord* d_output,
+    const Metadata& metadata,
+    std::size_t candidate_count,
+    const std::uint8_t* d_mask,
+    CatalogMaskMetadata catalog_metadata) {
+    cudaEvent_t kernel_begin{};
+    cudaEvent_t kernel_end{};
+    require_cuda(cudaEventCreate(&kernel_begin), "cudaEventCreate catalog geometry begin");
+    require_cuda(cudaEventCreate(&kernel_end), "cudaEventCreate catalog geometry end");
+    require_cuda(cudaEventRecord(kernel_begin), "cudaEventRecord catalog geometry begin");
+    if (candidate_count > 0) {
+        score_batch_catalog_geometry_kernel<<<static_cast<unsigned int>(candidate_count), 256>>>(
+            d_target,
+            d_current,
+            d_weights,
+            d_candidates,
+            d_output,
+            metadata.width,
+            metadata.height,
+            metadata.baseTotalError,
+            d_mask,
+            catalog_metadata);
+    }
+    require_cuda(cudaGetLastError(), "score_batch_catalog_geometry_kernel launch");
+    require_cuda(cudaEventRecord(kernel_end), "cudaEventRecord catalog geometry end");
+    require_cuda(cudaEventSynchronize(kernel_end), "cudaEventSynchronize catalog geometry end");
+    float kernel_ms = 0;
+    require_cuda(cudaEventElapsedTime(&kernel_ms, kernel_begin, kernel_end), "cudaEventElapsedTime catalog geometry");
+    cudaEventDestroy(kernel_begin);
+    cudaEventDestroy(kernel_end);
+    return kernel_ms;
+}
+
 static float run_resident_rotated_geometry_device_chunk_kernel(
     const std::uint8_t* d_target,
     const std::uint8_t* d_current,
@@ -1714,8 +1933,10 @@ struct ServerState {
     std::vector<std::uint32_t> h_contour_alias_index;
     CandidateRecord* d_candidates = nullptr;
     ScoreRecord* d_output = nullptr;
+    std::uint8_t* d_catalog_mask = nullptr;
     std::size_t candidateCapacity = 0;
     std::size_t outputCapacity = 0;
+    std::size_t catalogMaskCapacity = 0;
 
     ~ServerState() {
         cudaFree(d_target);
@@ -1725,6 +1946,7 @@ struct ServerState {
         cudaFree(d_structural_tangent);
         cudaFree(d_candidates);
         cudaFree(d_output);
+        cudaFree(d_catalog_mask);
     }
 
     void ensure_buffers(std::size_t candidate_count) {
@@ -1738,6 +1960,13 @@ struct ServerState {
             require_cuda(cudaMalloc(&d_output, std::max<std::size_t>(candidate_count, 1) * sizeof(ScoreRecord)), "server cudaMalloc output");
             outputCapacity = candidate_count;
         }
+    }
+
+    void ensure_catalog_mask(std::size_t bytes) {
+        if (bytes <= catalogMaskCapacity) return;
+        cudaFree(d_catalog_mask);
+        require_cuda(cudaMalloc(&d_catalog_mask, bytes), "server cudaMalloc catalog mask");
+        catalogMaskCapacity = bytes;
     }
 };
 
@@ -2089,6 +2318,64 @@ static void server_score_batch_rotated_geometry_weighted(ServerState& state, int
     write_stdout_value(d2h_ms);
     write_stdout_value(total_ms);
     write_stdout_bytes(output.data(), output.size() * sizeof(ScoreRecord));
+    std::cout.flush();
+}
+
+static void server_score_batch_catalog_geometry(ServerState& state, bool weighted) {
+    if (!state.d_target || !state.d_current || (weighted && !state.d_weights)) {
+        throw std::runtime_error("SCORE_BATCH_CATALOG_GEOMETRY before INIT/SET_WEIGHT_MAP");
+    }
+    std::uint32_t candidate_count_u32 = 0;
+    CatalogMaskMetadata metadata{};
+    if (!read_stdin_value(candidate_count_u32) || !read_stdin_value(metadata)) {
+        throw std::runtime_error("invalid SCORE_BATCH_CATALOG_GEOMETRY payload");
+    }
+    const std::size_t candidate_count = candidate_count_u32;
+    const std::size_t mask_bytes = static_cast<std::size_t>(metadata.size) * metadata.size;
+    if (metadata.size < 32 || metadata.size > 1024 || metadata.intrinsicWidth <= 0 || metadata.intrinsicHeight <= 0 ||
+        metadata.maxX <= metadata.minX || metadata.maxY <= metadata.minY) {
+        throw std::runtime_error("invalid catalog mask metadata");
+    }
+    std::vector<std::uint8_t> mask(mask_bytes);
+    std::vector<RotatedCandidateRecord> candidates(candidate_count);
+    read_stdin_bytes(mask.data(), mask.size(), "catalog mask");
+    read_stdin_bytes(candidates.data(), candidates.size() * sizeof(RotatedCandidateRecord), "catalog candidates");
+
+    const auto total_start = std::chrono::steady_clock::now();
+    state.ensure_buffers(candidate_count);
+    state.ensure_catalog_mask(mask_bytes);
+    const auto h2d_start = std::chrono::steady_clock::now();
+    require_cuda(cudaMemcpy(state.d_catalog_mask, mask.data(), mask.size(), cudaMemcpyHostToDevice), "server cudaMemcpy catalog mask");
+    if (!candidates.empty()) {
+        require_cuda(cudaMemcpy(state.d_candidates, candidates.data(), candidates.size() * sizeof(RotatedCandidateRecord), cudaMemcpyHostToDevice), "server cudaMemcpy catalog candidates");
+    }
+    const auto h2d_end = std::chrono::steady_clock::now();
+    Metadata batch_metadata = state.metadata;
+    batch_metadata.candidateCount = candidate_count_u32;
+    const float kernel_ms = run_score_catalog_geometry_kernel(
+        state.d_target,
+        state.d_current,
+        weighted ? state.d_weights : nullptr,
+        reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
+        state.d_output,
+        batch_metadata,
+        candidate_count,
+        state.d_catalog_mask,
+        metadata);
+    std::vector<ScoreRecord> scores(candidate_count);
+    const auto d2h_start = std::chrono::steady_clock::now();
+    if (!scores.empty()) {
+        require_cuda(cudaMemcpy(scores.data(), state.d_output, scores.size() * sizeof(ScoreRecord), cudaMemcpyDeviceToHost), "server cudaMemcpy catalog output");
+    }
+    const auto d2h_end = std::chrono::steady_clock::now();
+    const std::uint32_t status = 0;
+    write_stdout_value(status);
+    write_stdout_value(candidate_count_u32);
+    write_stdout_value(elapsed_ms(h2d_start, h2d_end));
+    write_stdout_value(static_cast<double>(kernel_ms));
+    write_stdout_value(elapsed_ms(d2h_start, d2h_end));
+    write_stdout_value(elapsed_ms(total_start, std::chrono::steady_clock::now()));
+    write_stdout_bytes(scores.data(), scores.size() * sizeof(ScoreRecord));
     std::cout.flush();
 }
 
@@ -3771,6 +4058,10 @@ static int run_server() {
             server_resident_select_layer_mixed(state, true, true);
         } else if (command == CMD_RESIDENT_SELECT_LAYER_STRUCTURAL_DEVICE_CHUNK) {
             server_resident_select_layer_mixed(state, true, true, true);
+        } else if (command == CMD_SCORE_BATCH_CATALOG_GEOMETRY) {
+            server_score_batch_catalog_geometry(state, false);
+        } else if (command == CMD_SCORE_BATCH_CATALOG_GEOMETRY_WEIGHTED) {
+            server_score_batch_catalog_geometry(state, true);
         } else if (command == CMD_UPDATE_CURRENT) {
             server_update_current(state);
         } else if (command == CMD_SHUTDOWN) {

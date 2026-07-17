@@ -218,12 +218,18 @@ namespace GTAEmblemMaker.Core
                         var selected = await client.SelectLayerAsync(selectRequest, cancellationToken).ConfigureAwait(false);
                         var shapeKind = mixed ? selected.SelectedShapeKind : 0;
                         var candidate = CandidateGenerator.FromResidentResult(shapeKind, selected.SelectedCandidate, selected.SelectedScore);
+                        CatalogSelection catalogSelection = null;
+                        if (stage.CatalogSearch != null && layer >= stage.CatalogSearch.FromLayer)
+                        {
+                            catalogSelection = await CatalogCandidateSearch.SelectAsync(client, stage.CatalogSearch, layer, stage.MinAxis, cancellationToken).ConfigureAwait(false);
+                            candidate = ChooseCodeAwareCandidate(states, candidate, catalogSelection.BestByIdentity, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, payloadBuilder.BudgetCodeLength, baseTotalError);
+                        }
                         PerceptualSelection perceptualSelection = null;
                         var perceptualMilliseconds = 0.0;
                         if (perceptual != null && mixed && selected.Chains.Count > 1 && PerceptualReranker.ShouldRerank(stage.PerceptualRerank, layer, stage.MaxLayers))
                         {
                             var perceptualClock = Stopwatch.StartNew();
-                            perceptualSelection = await PerceptualReranker.SelectAsync(perceptual, stage.PerceptualRerank, target, current, selected.Chains, candidate, cancellationToken).ConfigureAwait(false);
+                            perceptualSelection = await PerceptualReranker.SelectAsync(perceptual, stage.PerceptualRerank, target, current, selected.Chains, candidate, cancellationToken, catalogSelection == null ? null : catalogSelection.Candidates).ConfigureAwait(false);
                             perceptualClock.Stop();
                             perceptualMilliseconds = perceptualClock.Elapsed.TotalMilliseconds;
                             candidate = perceptualSelection.Candidate;
@@ -238,7 +244,7 @@ namespace GTAEmblemMaker.Core
                         states.Add(state);
                         improvements.Add(candidate.OldErrorDelta >= candidate.NewErrorDelta ? candidate.OldErrorDelta - candidate.NewErrorDelta : 0);
                         baseTotalError = FitMath.ApplyCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError);
-                        trace.Add(new FitLayerTrace(layer, candidate.CandidateId, candidate.PoolShapeFamily, activeChoice.WeightMapId, payloadBuilder.BudgetCodeLength, baseTotalError, candidate.Energy, selected.ServerTotalMs, perceptualSelection != null, perceptualSelection != null && perceptualSelection.ChangedSelection, perceptualSelection == null ? 0 : perceptualSelection.Score, perceptualMilliseconds));
+                        trace.Add(new FitLayerTrace(layer, candidate.CandidateId, candidate.PoolShapeFamily, activeChoice.WeightMapId, payloadBuilder.BudgetCodeLength, baseTotalError, candidate.Energy, selected.ServerTotalMs + (catalogSelection == null ? 0 : catalogSelection.ServerMilliseconds), perceptualSelection != null, perceptualSelection != null && perceptualSelection.ChangedSelection, perceptualSelection == null ? 0 : perceptualSelection.Score, perceptualMilliseconds));
                         if (overfitLayers > 0 && layer == totalAttempts && states.Count > maximumLayers)
                         {
                             LayerOptimizer.RetainBestByRemoval(target, initialCurrent, states, trace, improvements, activeMap.Q8, Width, maximumLayers, stage.LayerOptimization.RankingPoolMultiplier, cancellationToken);
@@ -336,6 +342,30 @@ namespace GTAEmblemMaker.Core
             }
 
             return new FitResult(states, trace, current, payloadBuilder.Build(), budgetReached, baseTotalError, activeChoice.WeightMapId, perceptual == null ? null : perceptual.BackendName);
+        }
+
+        private static FitCandidate ChooseCodeAwareCandidate(IReadOnlyList<ShapeState> states, FitCandidate historical, IReadOnlyList<FitCandidate> catalogCandidates, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int currentCodeLength, long baseTotalError)
+        {
+            var choices = new List<FitCandidate>(catalogCandidates.Count + 1) { historical };
+            choices.AddRange(catalogCandidates);
+            var baseEnergy = FitMath.EnergyFromTotal(baseTotalError, Width, Height);
+            FitCandidate best = null;
+            var bestScore = Double.NegativeInfinity;
+            for (var index = 0; index < choices.Count; index++)
+            {
+                var candidate = choices[index];
+                var proposal = new List<ShapeState>(states.Count + 1);
+                proposal.AddRange(states);
+                proposal.Add(CandidateGenerator.ToShapeState(candidate));
+                var codeLength = RockstarExporter.Build(proposal, transparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp).GeneratedCodeLength;
+                var score = (baseEnergy - candidate.Energy) / Math.Max(1, codeLength - currentCodeLength);
+                if (score > bestScore || score == bestScore && (best == null || candidate.CandidateId < best.CandidateId))
+                {
+                    best = candidate;
+                    bestScore = score;
+                }
+            }
+            return best;
         }
 
         private static RockstarExporter.IncrementalBuilder RebuildPayload(IReadOnlyList<ShapeState> states, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int budget)

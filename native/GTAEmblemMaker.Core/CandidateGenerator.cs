@@ -8,7 +8,8 @@ namespace GTAEmblemMaker.Core
         RotatedEllipse = 0,
         RotatedRectangle = 1,
         RotatedTriangle = 2,
-        LineRectangle = 3
+        LineRectangle = 3,
+        OfficialCatalog = 4
     }
 
     internal sealed class FitCandidate
@@ -101,6 +102,19 @@ namespace GTAEmblemMaker.Core
             return new FitCandidate(candidate.CandidateId, candidate.GroupId, kind, shape, poolShapeFamily, candidate.Cx, candidate.Cy, candidate.Rx, candidate.Ry, score.Red, score.Green, score.Blue, score.Alpha, candidate.AngleDegrees, score.Energy, score.OldErrorDelta, score.NewErrorDelta);
         }
 
+        internal static FitCandidate FromCatalogResult(string identifier, uint group, CudaCatalogCandidate candidate, CudaScore score)
+        {
+            if (String.IsNullOrWhiteSpace(identifier)) throw new ArgumentException("Catalog identifier is required.", "identifier");
+            if (candidate == null) throw new ArgumentNullException("candidate");
+            if (score == null || candidate.CandidateId != score.CandidateId) throw new ArgumentException("Catalog candidate and score IDs differ.");
+            return new FitCandidate(candidate.CandidateId, group, CandidateShapeKind.OfficialCatalog, identifier, identifier,
+                checked((int)Math.Round(candidate.Cx, MidpointRounding.AwayFromZero)),
+                checked((int)Math.Round(candidate.Cy, MidpointRounding.AwayFromZero)),
+                checked((int)Math.Round(candidate.Rx, MidpointRounding.AwayFromZero)),
+                checked((int)Math.Round(candidate.Ry, MidpointRounding.AwayFromZero)),
+                score.Red, score.Green, score.Blue, score.Alpha, candidate.AngleDegrees, score.Energy, score.OldErrorDelta, score.NewErrorDelta);
+        }
+
         internal static ShapeState ToShapeState(FitCandidate candidate)
         {
             if (candidate == null) throw new ArgumentNullException("candidate");
@@ -108,6 +122,7 @@ namespace GTAEmblemMaker.Core
             if (candidate.Kind == CandidateShapeKind.RotatedEllipse) shape = "ellipse";
             else if (candidate.Kind == CandidateShapeKind.RotatedTriangle) shape = "triangle";
             else if (candidate.Kind == CandidateShapeKind.RotatedRectangle || candidate.Kind == CandidateShapeKind.LineRectangle) shape = "rectangle";
+            else if (candidate.Kind == CandidateShapeKind.OfficialCatalog) shape = candidate.Shape;
             else throw new ArgumentOutOfRangeException("candidate");
             return new ShapeState(shape, candidate.Cx, candidate.Cy, candidate.Rx, candidate.Ry, candidate.Red, candidate.Green, candidate.Blue, candidate.Alpha, candidate.AngleDegrees);
         }
@@ -121,7 +136,7 @@ namespace GTAEmblemMaker.Core
                 0,
                 kind,
                 state.Shape,
-                PoolShapeFamily(kind),
+                kind == CandidateShapeKind.OfficialCatalog ? state.Shape : PoolShapeFamily(kind),
                 checked((int)Math.Round(state.Cx, MidpointRounding.AwayFromZero)),
                 checked((int)Math.Round(state.Cy, MidpointRounding.AwayFromZero)),
                 checked((int)Math.Round(state.Rx, MidpointRounding.AwayFromZero)),
@@ -142,6 +157,8 @@ namespace GTAEmblemMaker.Core
             if (shape == "rotated-rect" || shape == "rectangle") return CandidateShapeKind.RotatedRectangle;
             if (shape == "rotated-triangle" || shape == "triangle") return CandidateShapeKind.RotatedTriangle;
             if (shape == "rotated" || shape == "ellipse" || shape == "circle" || shape == "round") return CandidateShapeKind.RotatedEllipse;
+            ShapeDefinition definition;
+            if (OfficialCatalog.TryGetDefinition(shape, out definition)) return CandidateShapeKind.OfficialCatalog;
             throw new ArgumentException("Unknown candidate shape.", "shape");
         }
 

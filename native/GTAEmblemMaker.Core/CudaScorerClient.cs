@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -213,6 +214,18 @@ namespace GTAEmblemMaker.Core
                 if (chainCount != expectedChainCount) throw new InvalidDataException("Mixed response chain count does not match the request.");
                 var tail = await ReadExactAsync(checked((int)chainCount * CudaProtocol.MixedChainSize), token).ConfigureAwait(false);
                 return CudaProtocol.ParseMixedResponse(prefix, tail);
+            }, cancellationToken);
+        }
+
+        internal Task<CudaCatalogScoreResult> ScoreCatalogAsync(CatalogMaskAtlasEntry atlas, IReadOnlyList<CudaCatalogCandidate> candidates, bool weighted, CancellationToken cancellationToken)
+        {
+            var request = CudaProtocol.CreateCatalogScoreRequest(atlas, candidates, weighted);
+            return ExchangeAsync(async token =>
+            {
+                await WriteAsync(request, token).ConfigureAwait(false);
+                var prefix = await ReadExactAsync(CudaProtocol.CatalogResponsePrefixSize, token).ConfigureAwait(false);
+                var tail = await ReadExactAsync(checked(candidates.Count * 32), token).ConfigureAwait(false);
+                return CudaProtocol.ParseCatalogScoreResponse(prefix, tail, candidates.Count);
             }, cancellationToken);
         }
 
