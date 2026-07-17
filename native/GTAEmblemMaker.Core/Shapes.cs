@@ -124,8 +124,8 @@ namespace GTAEmblemMaker.Core
             ShapeDefinition definition;
             var usesIntrinsicAnchor = OfficialCatalog.TryGetDefinition(state.Shape, out definition);
             if (!usesIntrinsicAnchor) definition = DefinitionFor(state.Shape);
-            var rx = Math.Max(state.Rx, MinEllipseAxis);
-            var ry = Math.Max(state.Ry, MinEllipseAxis);
+            var rx = usesIntrinsicAnchor ? state.Rx : Math.Max(state.Rx, MinEllipseAxis);
+            var ry = usesIntrinsicAnchor ? state.Ry : Math.Max(state.Ry, MinEllipseAxis);
             var alpha = state.Alpha;
             if (definition == Round01 && (rx != state.Rx || ry != state.Ry))
             {
