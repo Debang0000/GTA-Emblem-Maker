@@ -467,7 +467,7 @@ namespace GTAEmblemMaker.Core
         {
             if (currentRgba == null) throw new ArgumentNullException("currentRgba");
             if (width <= 0 || currentRgba.Length == 0 || currentRgba.Length % (width * 4) != 0) throw new ArgumentException("Current RGBA dimensions are invalid.", "currentRgba");
-            ApplyCandidateCore(null, currentRgba, width, candidate, null, 0);
+            ApplyCandidateCore(null, currentRgba, width, candidate, null, 0, false);
         }
 
         internal static long ApplyCandidateAndUpdateError(byte[] targetRgba, byte[] currentRgba, int width, FitCandidate candidate, byte[] weightsQ8, long baseTotalError)
@@ -477,7 +477,17 @@ namespace GTAEmblemMaker.Core
             if (weightsQ8 == null) throw new ArgumentNullException("weightsQ8");
             if (weightsQ8.Length != currentRgba.Length / 2) throw new ArgumentException("Weight map length does not match the image.", "weightsQ8");
             if (baseTotalError < 0) throw new ArgumentOutOfRangeException("baseTotalError");
-            return ApplyCandidateCore(targetRgba, currentRgba, width, candidate, weightsQ8, baseTotalError);
+            return ApplyCandidateCore(targetRgba, currentRgba, width, candidate, weightsQ8, baseTotalError, false);
+        }
+
+        internal static long ApplyCompatibilityCandidateAndUpdateError(byte[] targetRgba, byte[] currentRgba, int width, FitCandidate candidate, byte[] weightsQ8, long baseTotalError)
+        {
+            RequireEqualRgba(targetRgba, currentRgba);
+            if (width <= 0 || currentRgba.Length % (width * 4) != 0) throw new ArgumentException("Current RGBA dimensions are invalid.", "currentRgba");
+            if (weightsQ8 == null) throw new ArgumentNullException("weightsQ8");
+            if (weightsQ8.Length != currentRgba.Length / 2) throw new ArgumentException("Weight map length does not match the image.", "weightsQ8");
+            if (baseTotalError < 0) throw new ArgumentOutOfRangeException("baseTotalError");
+            return ApplyCandidateCore(targetRgba, currentRgba, width, candidate, weightsQ8, baseTotalError, true);
         }
 
         internal static long EvaluateCandidateError(byte[] targetRgba, byte[] currentRgba, int width, FitCandidate candidate, byte[] weightsQ8, long baseTotalError)
@@ -556,10 +566,10 @@ namespace GTAEmblemMaker.Core
             return crop;
         }
 
-        private static long ApplyCandidateCore(byte[] targetRgba, byte[] currentRgba, int width, FitCandidate candidate, byte[] weightsQ8, long baseTotalError)
+        private static long ApplyCandidateCore(byte[] targetRgba, byte[] currentRgba, int width, FitCandidate candidate, byte[] weightsQ8, long baseTotalError, bool compatibilityGeometry)
         {
             var height = currentRgba.Length / (width * 4);
-            var lines = Rasterize(candidate, width, height);
+            var lines = compatibilityGeometry ? RasterizeCompatibility(candidate, width, height) : Rasterize(candidate, width, height);
             const long maximum = UInt16.MaxValue;
             var sourceAlpha = candidate.Alpha * 0x101L;
             var sourceRed = candidate.Red * 0x101L * candidate.Alpha / 255;
@@ -581,6 +591,41 @@ namespace GTAEmblemMaker.Core
                 }
             }
             return total;
+        }
+
+        private static IReadOnlyList<RasterLine> RasterizeCompatibility(FitCandidate candidate, int width, int height)
+        {
+            if (candidate.Kind == CandidateShapeKind.OfficialCatalog) return RasterizeCatalog(candidate, width, height);
+            var lines = new List<RasterLine>();
+            var theta = candidate.AngleDegrees * Math.PI / 180;
+            var cos = Math.Cos(theta);
+            var sin = Math.Sin(theta);
+            var extentX = (int)Math.Ceiling(Math.Abs(candidate.Rx * cos) + Math.Abs(candidate.Ry * sin)) + 1;
+            var extentY = (int)Math.Ceiling(Math.Abs(candidate.Rx * sin) + Math.Abs(candidate.Ry * cos)) + 1;
+            var minX = Math.Max(0, candidate.Cx - extentX);
+            var maxX = Math.Min(width - 1, candidate.Cx + extentX);
+            var minY = Math.Max(0, candidate.Cy - extentY);
+            var maxY = Math.Min(height - 1, candidate.Cy + extentY);
+            for (var y = minY; y <= maxY; y++)
+            {
+                var runStart = -1;
+                for (var x = minX; x <= maxX; x++)
+                {
+                    bool contains;
+                    if (candidate.Kind == CandidateShapeKind.RotatedTriangle) contains = CompatibilityTriangleContains(candidate, x, y, cos, sin);
+                    else if (candidate.Kind == CandidateShapeKind.RotatedRectangle || candidate.Kind == CandidateShapeKind.LineRectangle) contains = CompatibilityRectangleContains(candidate, x, y, cos, sin);
+                    else if (candidate.Kind == CandidateShapeKind.RotatedEllipse) contains = CompatibilityEllipseContains(candidate, x, y, cos, sin);
+                    else throw new ArgumentOutOfRangeException("candidate");
+                    if (contains && runStart < 0) runStart = x;
+                    if (!contains && runStart >= 0)
+                    {
+                        lines.Add(new RasterLine(y, runStart, x - 1, UInt16.MaxValue));
+                        runStart = -1;
+                    }
+                }
+                if (runStart >= 0) lines.Add(new RasterLine(y, runStart, maxX, UInt16.MaxValue));
+            }
+            return lines;
         }
 
         private static byte Blend(byte current, long blend, long source, ushort coverage)
@@ -649,6 +694,46 @@ namespace GTAEmblemMaker.Core
         {
             var dx = x + 0.5 - candidate.Cx;
             var dy = y + 0.5 - candidate.Cy;
+            localX = JsRound((cos * dx + sin * dy) * CoordinateScale) / CoordinateScale;
+            localY = JsRound((-sin * dx + cos * dy) * CoordinateScale) / CoordinateScale;
+        }
+
+        private static bool CompatibilityEllipseContains(FitCandidate candidate, int x, int y, double cos, double sin)
+        {
+            double localX;
+            double localY;
+            CompatibilityLocalCoordinates(candidate, x, y, cos, sin, out localX, out localY);
+            var ry = Math.Max(1, candidate.Ry);
+            var yEpsilon = Math.Abs(sin) > 1e-12 ? EdgeEpsilon : 0;
+            if (Math.Abs(localY) >= ry + yEpsilon) return false;
+            var aspect = candidate.Rx / (double)ry;
+            var span = (int)Math.Floor(Math.Sqrt(ry * ry - localY * localY) * aspect);
+            return Math.Abs(localX) <= span + EdgeEpsilon;
+        }
+
+        private static bool CompatibilityRectangleContains(FitCandidate candidate, int x, int y, double cos, double sin)
+        {
+            double localX;
+            double localY;
+            CompatibilityLocalCoordinates(candidate, x, y, cos, sin, out localX, out localY);
+            return Math.Abs(localX) <= candidate.Rx + EdgeEpsilon && Math.Abs(localY) <= candidate.Ry + EdgeEpsilon;
+        }
+
+        private static bool CompatibilityTriangleContains(FitCandidate candidate, int x, int y, double cos, double sin)
+        {
+            double localX;
+            double localY;
+            CompatibilityLocalCoordinates(candidate, x, y, cos, sin, out localX, out localY);
+            var ry = Math.Max(1, candidate.Ry);
+            if (localY < -ry - EdgeEpsilon || localY > ry + EdgeEpsilon) return false;
+            var position = (localY + ry) / (2 * ry);
+            return Math.Abs(localX) <= candidate.Rx * position + EdgeEpsilon;
+        }
+
+        private static void CompatibilityLocalCoordinates(FitCandidate candidate, int x, int y, double cos, double sin, out double localX, out double localY)
+        {
+            var dx = x - candidate.Cx;
+            var dy = y - candidate.Cy;
             localX = JsRound((cos * dx + sin * dy) * CoordinateScale) / CoordinateScale;
             localY = JsRound((-sin * dx + cos * dy) * CoordinateScale) / CoordinateScale;
         }

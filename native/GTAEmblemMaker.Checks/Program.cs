@@ -21,9 +21,22 @@ namespace GTAEmblemMaker.Checks
                 using (var sha256 = SHA256.Create()) Console.WriteLine(ToHex(sha256.ComputeHash(SourceImage.Load(args[1]).CanonicalRgba)));
                 return;
             }
+            if (args.Length == 2 && args[0] == "--catalog-canonical-check")
+            {
+                using (var sha256 = SHA256.Create())
+                {
+                    Check.Equal("80319d17544318d0ba44647cc3fdf10410b2f08605966aac282d2c91d97eb720", ToHex(sha256.ComputeHash(SourceImage.Load(args[1]).CanonicalRgba)), "native canonical RGBA diagnostic hash");
+                }
+                return;
+            }
             if (args.Length == 3 && args[0] == "--canonical-output")
             {
                 File.WriteAllBytes(args[2], SourceImage.Load(args[1]).CanonicalRgba);
+                return;
+            }
+            if (args.Length == 4 && args[0] == "--catalog-prefix-check")
+            {
+                CatalogCompatibilityChecks.Run(args[1], args[2], args[3]);
                 return;
             }
             if (args.Length == 2 && args[0] == "--perceptual-check")
@@ -91,7 +104,7 @@ namespace GTAEmblemMaker.Checks
             Check.True(perceptualProfile != null, "perceptual profile available");
             Check.Equal("greedy", perceptualProfile.Pipeline.Runner, "perceptual runner");
             Check.True(catalogProfile != null, "official catalog profile available");
-            Check.Equal("greedy", catalogProfile.Pipeline.Runner, "official catalog runner");
+            Check.Equal("catalog-compatible", catalogProfile.Pipeline.Runner, "official catalog runner");
             Check.Equal(11, catalogProfile.Stages[0].CatalogSearch.Identities.Count, "official catalog identity count");
             Check.Equal(501, catalogProfile.Stages[0].CatalogSearch.FromLayer, "official catalog first layer");
             Check.Equal(512, catalogProfile.Stages[0].CatalogSearch.CandidatesPerGroup, "official catalog candidate quota");

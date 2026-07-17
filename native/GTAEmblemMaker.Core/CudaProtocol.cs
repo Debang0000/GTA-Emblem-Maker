@@ -9,7 +9,9 @@ namespace GTAEmblemMaker.Core
     {
         Unspecified = 0,
         RotatedDeviceChunk = 1,
-        MixedDeviceChunk = 2
+        MixedDeviceChunk = 2,
+        RotatedResident = 3,
+        MixedResident = 4
     }
 
     public sealed class CudaSelectLayerRequest
@@ -41,7 +43,8 @@ namespace GTAEmblemMaker.Core
         public uint StructuralRounds { get; set; }
         public uint MaxPixelGainRegressionQ16 { get; set; }
 
-        public bool IsMixed { get { return Mode == CudaSelectLayerMode.MixedDeviceChunk; } }
+        public bool IsMixed { get { return Mode == CudaSelectLayerMode.MixedDeviceChunk || Mode == CudaSelectLayerMode.MixedResident; } }
+        public bool IsDeviceChunk { get { return Mode == CudaSelectLayerMode.RotatedDeviceChunk || Mode == CudaSelectLayerMode.MixedDeviceChunk; } }
     }
 
     public sealed class CudaCandidate
@@ -243,9 +246,13 @@ namespace GTAEmblemMaker.Core
             Validate(request);
             return WriteRequest(writer =>
             {
-                writer.Write(request.Mode == CudaSelectLayerMode.MixedDeviceChunk
-                    ? (request.StructuralRounds != 0 ? 22u : request.StrokeScale == 0 ? 17u : 19u)
-                    : 16u);
+                writer.Write(request.Mode == CudaSelectLayerMode.MixedResident
+                    ? 15u
+                    : request.Mode == CudaSelectLayerMode.RotatedResident
+                        ? 14u
+                        : request.Mode == CudaSelectLayerMode.MixedDeviceChunk
+                            ? (request.StructuralRounds != 0 ? 22u : request.StrokeScale == 0 ? 17u : 19u)
+                            : 16u);
                 writer.Write(request.CandidatesPerGroup);
                 writer.Write(request.GroupCount);
                 writer.Write(request.Age);
@@ -272,7 +279,7 @@ namespace GTAEmblemMaker.Core
                         writer.Write(request.MaxLongAxis);
                     }
                 }
-                writer.Write(request.DeviceChunkRounds);
+                if (request.IsDeviceChunk) writer.Write(request.DeviceChunkRounds);
                 if (request.StructuralRounds != 0)
                 {
                     writer.Write(request.StructuralEdgeWeightQ16);
@@ -464,7 +471,7 @@ namespace GTAEmblemMaker.Core
         private static void Validate(CudaSelectLayerRequest request)
         {
             if (request == null) throw new ArgumentNullException("request");
-            if (request.Mode != CudaSelectLayerMode.RotatedDeviceChunk && request.Mode != CudaSelectLayerMode.MixedDeviceChunk) throw new ArgumentOutOfRangeException("request", "CUDA command mode must be explicit.");
+            if (request.Mode != CudaSelectLayerMode.RotatedDeviceChunk && request.Mode != CudaSelectLayerMode.MixedDeviceChunk && request.Mode != CudaSelectLayerMode.RotatedResident && request.Mode != CudaSelectLayerMode.MixedResident) throw new ArgumentOutOfRangeException("request", "CUDA command mode must be explicit.");
             if (request.CandidatesPerGroup == 0 || request.CandidatesPerGroup > MaxCandidatesPerGroup) throw new ArgumentOutOfRangeException("request", "Candidates per group are outside the production bounds.");
             if (request.GroupCount == 0 || request.GroupCount > MaxGroupCount) throw new ArgumentOutOfRangeException("request", "Group count is outside the production bounds.");
             if (request.Age == 0 || request.Age > MaxAge) throw new ArgumentOutOfRangeException("request", "Age is outside the production bounds.");
@@ -473,9 +480,16 @@ namespace GTAEmblemMaker.Core
             if (request.MaxHillSteps == 0 || request.MaxHillSteps > MaxHillSteps) throw new ArgumentOutOfRangeException("request", "Hill steps are outside the production bounds.");
             if (request.MinAxis == 0 || request.MinAxis > MaxMinAxis) throw new ArgumentOutOfRangeException("request", "Minimum axis is outside the production bounds.");
             if (request.Layer == 0 || request.Layer > MaxLayer) throw new ArgumentOutOfRangeException("request", "Layer is outside the production bounds.");
-            if (request.DeviceChunkRounds == 0 || request.DeviceChunkRounds > MaxDeviceChunkRounds || request.DeviceChunkRounds > request.EarlyStopRounds) throw new ArgumentOutOfRangeException("request", "Device chunk rounds are outside the production bounds.");
+            if (request.IsDeviceChunk)
+            {
+                if (request.DeviceChunkRounds == 0 || request.DeviceChunkRounds > MaxDeviceChunkRounds || request.DeviceChunkRounds > request.EarlyStopRounds) throw new ArgumentOutOfRangeException("request", "Device chunk rounds are outside the production bounds.");
+            }
+            else if (request.DeviceChunkRounds != 0)
+            {
+                throw new ArgumentException("Resident compatibility mode does not accept device chunk rounds.", "request");
+            }
             if (request.MinAlpha > request.MaxAlpha || request.MaxAlpha > 255 || request.InitialAlpha > 255) throw new ArgumentOutOfRangeException("request", "Alpha values must be valid bytes.");
-            if (request.Mode == CudaSelectLayerMode.RotatedDeviceChunk)
+            if (!request.IsMixed)
             {
                 if (request.ShapeMask != 0 || request.SelectionMode != 0 || request.GuideMode != 0 || request.StrokeScale != 0 || request.MinLongAxis != 0 || request.MaxLongAxis != 0 || request.StructuralEdgeWeightQ16 != 0 || request.StructuralDistanceLimit != 0 || request.StructuralRounds != 0 || request.MaxPixelGainRegressionQ16 != 0) throw new ArgumentException("Mixed fields are not valid in rotated mode.", "request");
             }
@@ -505,7 +519,7 @@ namespace GTAEmblemMaker.Core
                 }
             }
 
-            var shapeCount = request.Mode == CudaSelectLayerMode.MixedDeviceChunk ? CountShapeBits(request.ShapeMask) : 1u;
+            var shapeCount = request.IsMixed ? CountShapeBits(request.ShapeMask) : 1u;
             var initialCandidates = checked(request.CandidatesPerGroup * request.GroupCount);
             if (initialCandidates > MaxInitialCandidateCount) throw new ArgumentOutOfRangeException("request", "Initial candidate count exceeds the production bound.");
             if (checked(initialCandidates * shapeCount) > MaxMixedInitialCandidateCount) throw new ArgumentOutOfRangeException("request", "Total initial candidate count exceeds the production bound.");

@@ -819,6 +819,208 @@ __global__ void score_batch_rotated_geometry_weighted_kernel(
     }
 }
 
+__device__ void compatibility_rotated_coordinates(
+    const RotatedCandidateRecord& candidate,
+    int x,
+    int y,
+    double cosine,
+    double sine,
+    double& local_x,
+    double& local_y) {
+    constexpr double coordinate_scale = 1000000.0;
+    const double dx = static_cast<double>(x - candidate.cx);
+    const double dy = static_cast<double>(y - candidate.cy);
+    local_x = round((cosine * dx + sine * dy) * coordinate_scale) / coordinate_scale;
+    local_y = round((-sine * dx + cosine * dy) * coordinate_scale) / coordinate_scale;
+}
+
+__device__ bool compatibility_rotated_geometry_contains(
+    const RotatedCandidateRecord& candidate,
+    int x,
+    int y,
+    double cosine,
+    double sine,
+    int shape_kind) {
+    constexpr double edge_epsilon = 1e-7;
+    double local_x = 0.0;
+    double local_y = 0.0;
+    compatibility_rotated_coordinates(candidate, x, y, cosine, sine, local_x, local_y);
+    if (shape_kind == GEOMETRY_RECTANGLE || shape_kind == GEOMETRY_LINE_RECTANGLE) {
+        return fabs(local_x) <= static_cast<double>(candidate.rx) + edge_epsilon &&
+            fabs(local_y) <= static_cast<double>(candidate.ry) + edge_epsilon;
+    }
+    if (shape_kind == GEOMETRY_TRIANGLE) {
+        const double ry = static_cast<double>(candidate.ry);
+        if (local_y < -ry - edge_epsilon || local_y > ry + edge_epsilon) return false;
+        const double position = (local_y + ry) / (2.0 * ry);
+        return fabs(local_x) <= static_cast<double>(candidate.rx) * position + edge_epsilon;
+    }
+    const double y_epsilon = fabs(sine) > 1e-12 ? edge_epsilon : 0.0;
+    if (fabs(local_y) >= static_cast<double>(candidate.ry) + y_epsilon) return false;
+    const double ry = static_cast<double>(candidate.ry);
+    const double aspect = static_cast<double>(candidate.rx) / ry;
+    const double radius2 = ry * ry - local_y * local_y;
+    const int half_width = static_cast<int>(floor(sqrt(radius2) * aspect));
+    return fabs(local_x) <= static_cast<double>(half_width) + edge_epsilon;
+}
+
+template <bool Weighted>
+__global__ void score_batch_rotated_geometry_compatibility_kernel(
+    const std::uint8_t* target,
+    const std::uint8_t* current,
+    const std::uint16_t* weights,
+    const RotatedCandidateRecord* candidates,
+    ScoreRecord* output,
+    int width,
+    int height,
+    std::uint64_t base_total_error,
+    int shape_kind,
+    const std::uint32_t* shape_kinds) {
+    const int tid = threadIdx.x;
+    const RotatedCandidateRecord candidate = candidates[blockIdx.x];
+    const int candidate_shape_kind = shape_kinds ? static_cast<int>(shape_kinds[blockIdx.x]) : shape_kind;
+
+    __shared__ long long rsum[256];
+    __shared__ long long gsum[256];
+    __shared__ long long bsum[256];
+    __shared__ long long divisor_sum[256];
+    __shared__ unsigned long long old_error[256];
+    __shared__ unsigned long long new_error[256];
+    __shared__ int color_r;
+    __shared__ int color_g;
+    __shared__ int color_b;
+
+    constexpr double pi = 3.1415926535897932384626433832795;
+    const double theta = static_cast<double>(candidate.angleDegrees) * pi / 180.0;
+    const double cosine = cos(theta);
+    const double sine = sin(theta);
+    const int extent_x = static_cast<int>(ceil(
+        fabs(static_cast<double>(candidate.rx) * cosine) +
+        fabs(static_cast<double>(candidate.ry) * sine))) + 1;
+    const int extent_y = static_cast<int>(ceil(
+        fabs(static_cast<double>(candidate.rx) * sine) +
+        fabs(static_cast<double>(candidate.ry) * cosine))) + 1;
+    const int min_x = max(0, candidate.cx - extent_x);
+    const int max_x = min(width - 1, candidate.cx + extent_x);
+    const int min_y = max(0, candidate.cy - extent_y);
+    const int max_y = min(height - 1, candidate.cy + extent_y);
+    const int box_width = max_x >= min_x ? max_x - min_x + 1 : 0;
+    const int box_height = max_y >= min_y ? max_y - min_y + 1 : 0;
+    const int pixel_count = box_width * box_height;
+
+    long long local_r = 0;
+    long long local_g = 0;
+    long long local_b = 0;
+    long long local_divisor = 0;
+    unsigned long long local_old = 0;
+    const int color_scale = 0x101 * 255 / candidate.alpha;
+    for (int index = tid; index < pixel_count; index += blockDim.x) {
+        const int x = min_x + index % box_width;
+        const int y = min_y + index / box_width;
+        if (!compatibility_rotated_geometry_contains(candidate, x, y, cosine, sine, candidate_shape_kind)) continue;
+        const int pixel = y * width + x;
+        const int offset = pixel * 4;
+        const int weight = Weighted ? static_cast<int>(weights[pixel]) : 1;
+        const int tr = target[offset + 0];
+        const int tg = target[offset + 1];
+        const int tb = target[offset + 2];
+        const int ta = target[offset + 3];
+        const int cr = current[offset + 0];
+        const int cg = current[offset + 1];
+        const int cb = current[offset + 2];
+        const int ca = current[offset + 3];
+        const int dr = tr - cr;
+        const int dg = tg - cg;
+        const int db = tb - cb;
+        const int da = ta - ca;
+        local_r += static_cast<long long>(((tr - cr) * color_scale + cr * 0x101) * weight);
+        local_g += static_cast<long long>(((tg - cg) * color_scale + cg * 0x101) * weight);
+        local_b += static_cast<long long>(((tb - cb) * color_scale + cb * 0x101) * weight);
+        const unsigned long long pixel_error = static_cast<unsigned long long>(dr * dr + dg * dg + db * db + da * da);
+        local_old += Weighted ? pixel_error * static_cast<unsigned long long>(weight) / 256u : pixel_error;
+        local_divisor += weight;
+    }
+
+    rsum[tid] = local_r;
+    gsum[tid] = local_g;
+    bsum[tid] = local_b;
+    divisor_sum[tid] = local_divisor;
+    old_error[tid] = local_old;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride) {
+            rsum[tid] += rsum[tid + stride];
+            gsum[tid] += gsum[tid + stride];
+            bsum[tid] += bsum[tid + stride];
+            divisor_sum[tid] += divisor_sum[tid + stride];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        if (divisor_sum[0] == 0) {
+            color_r = 0;
+            color_g = 0;
+            color_b = 0;
+        } else {
+            color_r = clamp_channel(static_cast<int>(rsum[0] / divisor_sum[0]) >> 8);
+            color_g = clamp_channel(static_cast<int>(gsum[0] / divisor_sum[0]) >> 8);
+            color_b = clamp_channel(static_cast<int>(bsum[0] / divisor_sum[0]) >> 8);
+        }
+    }
+    __syncthreads();
+
+    constexpr unsigned int maximum = 0xffff;
+    constexpr unsigned int mask_alpha = 0xffff;
+    const unsigned int alpha16 = static_cast<unsigned int>(candidate.alpha) * 0x101;
+    const unsigned int blend = (maximum - alpha16 * mask_alpha / maximum) * 0x101;
+    const unsigned int source_r = static_cast<unsigned int>((static_cast<unsigned long long>(color_r) * 0x101 * candidate.alpha) / 255);
+    const unsigned int source_g = static_cast<unsigned int>((static_cast<unsigned long long>(color_g) * 0x101 * candidate.alpha) / 255);
+    const unsigned int source_b = static_cast<unsigned int>((static_cast<unsigned long long>(color_b) * 0x101 * candidate.alpha) / 255);
+
+    unsigned long long local_new = 0;
+    for (int index = tid; index < pixel_count; index += blockDim.x) {
+        const int x = min_x + index % box_width;
+        const int y = min_y + index / box_width;
+        if (!compatibility_rotated_geometry_contains(candidate, x, y, cosine, sine, candidate_shape_kind)) continue;
+        const int pixel = y * width + x;
+        const int offset = pixel * 4;
+        const int weight = Weighted ? static_cast<int>(weights[pixel]) : 1;
+        const int ar = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 0]) * blend + static_cast<unsigned long long>(source_r) * mask_alpha) / maximum) >> 8));
+        const int ag = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 1]) * blend + static_cast<unsigned long long>(source_g) * mask_alpha) / maximum) >> 8));
+        const int ab = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 2]) * blend + static_cast<unsigned long long>(source_b) * mask_alpha) / maximum) >> 8));
+        const int aa = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(current[offset + 3]) * blend + static_cast<unsigned long long>(alpha16) * mask_alpha) / maximum) >> 8));
+        const int dr = target[offset + 0] - ar;
+        const int dg = target[offset + 1] - ag;
+        const int db = target[offset + 2] - ab;
+        const int da = target[offset + 3] - aa;
+        const unsigned long long pixel_error = static_cast<unsigned long long>(dr * dr + dg * dg + db * db + da * da);
+        local_new += Weighted ? pixel_error * static_cast<unsigned long long>(weight) / 256u : pixel_error;
+    }
+
+    new_error[tid] = local_new;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride) {
+            old_error[tid] += old_error[tid + stride];
+            new_error[tid] += new_error[tid + stride];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        ScoreRecord record{};
+        record.candidateId = candidate.candidateId;
+        record.r = static_cast<std::uint8_t>(color_r);
+        record.g = static_cast<std::uint8_t>(color_g);
+        record.b = static_cast<std::uint8_t>(color_b);
+        record.a = static_cast<std::uint8_t>(candidate.alpha);
+        record.oldErrorDelta = old_error[0];
+        record.newErrorDelta = new_error[0];
+        const double total = static_cast<double>(base_total_error - old_error[0] + new_error[0]);
+        record.energy = sqrt(total / static_cast<double>(width * height * 4)) / 255.0;
+        output[blockIdx.x] = record;
+    }
+}
+
 __device__ bool catalog_mask_contains(
     const RotatedCandidateRecord& candidate,
     int x,
@@ -1724,6 +1926,58 @@ static float run_score_rotated_geometry_weighted_kernel(
     require_cuda(cudaEventSynchronize(kernel_end), "cudaEventSynchronize weighted rotated geometry end");
     float kernel_ms = 0;
     require_cuda(cudaEventElapsedTime(&kernel_ms, kernel_begin, kernel_end), "cudaEventElapsedTime weighted rotated geometry");
+    cudaEventDestroy(kernel_begin);
+    cudaEventDestroy(kernel_end);
+    return kernel_ms;
+}
+
+static float run_score_rotated_geometry_compatibility_kernel(
+    const std::uint8_t* d_target,
+    const std::uint8_t* d_current,
+    const std::uint16_t* d_weights,
+    const RotatedCandidateRecord* d_candidates,
+    ScoreRecord* d_output,
+    const Metadata& metadata,
+    std::size_t candidate_count,
+    int shape_kind = GEOMETRY_ELLIPSE,
+    const std::uint32_t* d_shape_kinds = nullptr) {
+    cudaEvent_t kernel_begin{};
+    cudaEvent_t kernel_end{};
+    require_cuda(cudaEventCreate(&kernel_begin), "cudaEventCreate compatibility geometry begin");
+    require_cuda(cudaEventCreate(&kernel_end), "cudaEventCreate compatibility geometry end");
+    require_cuda(cudaEventRecord(kernel_begin), "cudaEventRecord compatibility geometry begin");
+    if (candidate_count > 0) {
+        if (d_weights) {
+            score_batch_rotated_geometry_compatibility_kernel<true><<<static_cast<unsigned int>(candidate_count), 256>>>(
+                d_target,
+                d_current,
+                d_weights,
+                d_candidates,
+                d_output,
+                metadata.width,
+                metadata.height,
+                metadata.baseTotalError,
+                shape_kind,
+                d_shape_kinds);
+        } else {
+            score_batch_rotated_geometry_compatibility_kernel<false><<<static_cast<unsigned int>(candidate_count), 256>>>(
+                d_target,
+                d_current,
+                nullptr,
+                d_candidates,
+                d_output,
+                metadata.width,
+                metadata.height,
+                metadata.baseTotalError,
+                shape_kind,
+                d_shape_kinds);
+        }
+    }
+    require_cuda(cudaGetLastError(), "score_batch_rotated_geometry_compatibility_kernel launch");
+    require_cuda(cudaEventRecord(kernel_end), "cudaEventRecord compatibility geometry end");
+    require_cuda(cudaEventSynchronize(kernel_end), "cudaEventSynchronize compatibility geometry end");
+    float kernel_ms = 0;
+    require_cuda(cudaEventElapsedTime(&kernel_ms, kernel_begin, kernel_end), "cudaEventElapsedTime compatibility geometry");
     cudaEventDestroy(kernel_begin);
     cudaEventDestroy(kernel_end);
     return kernel_ms;
@@ -3320,19 +3574,29 @@ static void server_resident_select_layer_rotated(ServerState& state, bool device
 
     Metadata batch_metadata = state.metadata;
     batch_metadata.candidateCount = static_cast<std::uint32_t>(initial_candidates.size());
-    const float random_kernel_ms = weighted
-        ? run_score_rotated_geometry_weighted_kernel(
+    const float random_kernel_ms = device_chunked
+        ? (weighted
+            ? run_score_rotated_geometry_weighted_kernel(
+                state.d_target,
+                state.d_current,
+                state.d_weights,
+                reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
+                state.d_output,
+                batch_metadata,
+                initial_candidates.size(),
+                GEOMETRY_ELLIPSE)
+            : run_score_rotated_geometry_kernel(
+                state.d_target,
+                state.d_current,
+                reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
+                state.d_output,
+                batch_metadata,
+                initial_candidates.size(),
+                GEOMETRY_ELLIPSE))
+        : run_score_rotated_geometry_compatibility_kernel(
             state.d_target,
             state.d_current,
-            state.d_weights,
-            reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
-            state.d_output,
-            batch_metadata,
-            initial_candidates.size(),
-            GEOMETRY_ELLIPSE)
-        : run_score_rotated_geometry_kernel(
-            state.d_target,
-            state.d_current,
+            weighted ? state.d_weights : nullptr,
             reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
             state.d_output,
             batch_metadata,
@@ -3445,24 +3709,15 @@ static void server_resident_select_layer_rotated(ServerState& state, bool device
 
         Metadata proposal_metadata = state.metadata;
         proposal_metadata.candidateCount = static_cast<std::uint32_t>(proposals.size());
-        const float this_kernel_ms = weighted
-            ? run_score_rotated_geometry_weighted_kernel(
-                state.d_target,
-                state.d_current,
-                state.d_weights,
-                reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
-                state.d_output,
-                proposal_metadata,
-                proposals.size(),
-                GEOMETRY_ELLIPSE)
-            : run_score_rotated_geometry_kernel(
-                state.d_target,
-                state.d_current,
-                reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
-                state.d_output,
-                proposal_metadata,
-                proposals.size(),
-                GEOMETRY_ELLIPSE);
+        const float this_kernel_ms = run_score_rotated_geometry_compatibility_kernel(
+            state.d_target,
+            state.d_current,
+            weighted ? state.d_weights : nullptr,
+            reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
+            state.d_output,
+            proposal_metadata,
+            proposals.size(),
+            GEOMETRY_ELLIPSE);
         kernel_ms += static_cast<double>(this_kernel_ms);
 
         std::vector<ScoreRecord> scores(proposals.size());
@@ -3562,6 +3817,7 @@ static void score_resident_rotated_candidates(
     const std::vector<RotatedCandidateRecord>& candidates,
     int shape_kind,
     bool weighted,
+    bool compatibility_geometry,
     std::vector<ScoreRecord>& scores,
     double& h2d_ms,
     double& kernel_ms,
@@ -3578,24 +3834,34 @@ static void score_resident_rotated_candidates(
 
     Metadata batch_metadata = state.metadata;
     batch_metadata.candidateCount = static_cast<std::uint32_t>(candidates.size());
-    const float this_kernel_ms = weighted
-        ? run_score_rotated_geometry_weighted_kernel(
+    const float this_kernel_ms = compatibility_geometry
+        ? run_score_rotated_geometry_compatibility_kernel(
             state.d_target,
             state.d_current,
-            state.d_weights,
+            weighted ? state.d_weights : nullptr,
             reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
             state.d_output,
             batch_metadata,
             candidates.size(),
             shape_kind)
-        : run_score_rotated_geometry_kernel(
-            state.d_target,
-            state.d_current,
-            reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
-            state.d_output,
-            batch_metadata,
-            candidates.size(),
-            shape_kind);
+        : (weighted
+            ? run_score_rotated_geometry_weighted_kernel(
+                state.d_target,
+                state.d_current,
+                state.d_weights,
+                reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
+                state.d_output,
+                batch_metadata,
+                candidates.size(),
+                shape_kind)
+            : run_score_rotated_geometry_kernel(
+                state.d_target,
+                state.d_current,
+                reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates),
+                state.d_output,
+                batch_metadata,
+                candidates.size(),
+                shape_kind));
     kernel_ms += static_cast<double>(this_kernel_ms);
 
     scores.resize(candidates.size());
@@ -3767,7 +4033,7 @@ static void server_resident_select_layer_mixed(ServerState& state, bool device_c
         }
         const auto random_end = std::chrono::steady_clock::now();
         random_generation_ms += elapsed_ms(random_start, random_end);
-        score_resident_rotated_candidates(state, shape_initial_candidates, shape_kind, weighted != 0, shape_initial_scores, random_h2d_ms, random_kernel_ms, random_d2h_ms);
+        score_resident_rotated_candidates(state, shape_initial_candidates, shape_kind, weighted != 0, !device_chunked, shape_initial_scores, random_h2d_ms, random_kernel_ms, random_d2h_ms);
         random_scorer_calls++;
         initial_candidates.insert(initial_candidates.end(), shape_initial_candidates.begin(), shape_initial_candidates.end());
         initial_scores.insert(initial_scores.end(), shape_initial_scores.begin(), shape_initial_scores.end());
@@ -3889,7 +4155,7 @@ static void server_resident_select_layer_mixed(ServerState& state, bool device_c
 
         for (const int shape_kind : shapes) {
             if (proposals[shape_kind].empty()) continue;
-            score_resident_rotated_candidates(state, proposals[shape_kind], shape_kind, weighted != 0, proposal_scores_by_shape[shape_kind], h2d_ms, kernel_ms, d2h_ms);
+            score_resident_rotated_candidates(state, proposals[shape_kind], shape_kind, weighted != 0, true, proposal_scores_by_shape[shape_kind], h2d_ms, kernel_ms, d2h_ms);
             proposal_scores += static_cast<std::uint32_t>(proposals[shape_kind].size());
             scorer_calls++;
         }

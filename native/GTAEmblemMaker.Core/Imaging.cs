@@ -27,6 +27,14 @@ namespace GTAEmblemMaker.Core
             CanonicalRgba = canonicalRgba;
         }
 
+        internal static SourceImage FromCanonical(byte[] canonicalRgba)
+        {
+            if (canonicalRgba == null) throw new ArgumentNullException("canonicalRgba");
+            if (canonicalRgba.Length != CanvasSize * CanvasSize * 4) throw new ArgumentException("Canonical RGBA must be a 512x512 image.", "canonicalRgba");
+            var copy = (byte[])canonicalRgba.Clone();
+            return new SourceImage(CanvasSize, CanvasSize, HasTransparency(copy), copy);
+        }
+
         public static SourceImage Load(string path)
         {
             if (String.IsNullOrWhiteSpace(path)) throw new ArgumentException("Image path is required.", "path");

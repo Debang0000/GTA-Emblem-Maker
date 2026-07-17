@@ -16,6 +16,8 @@ namespace GTAEmblemMaker.Checks
             CheckSetStructuralGuideRequest();
             CheckUpdateCurrentRequest();
             CheckShutdownRequest();
+            CheckRotatedResidentRequest();
+            CheckMixedResidentRequest();
             CheckRotatedRequest();
             CheckMixedRequest();
             CheckGuidedMixedRequest();
@@ -81,6 +83,26 @@ namespace GTAEmblemMaker.Checks
             request.DeviceChunkRounds = 15;
             Check.SequenceEqual(UInt32Fields(16, 1, 2, 3, 4, 15, 6, 7, 8, 1, 1, 9, 10, 11, 12, 15),
                 CudaProtocol.CreateSelectLayerRequest(request), "CUDA rotated device-chunk layout");
+        }
+
+        private static void CheckRotatedResidentRequest()
+        {
+            var request = Request();
+            request.Mode = CudaSelectLayerMode.RotatedResident;
+            request.DeviceChunkRounds = 0;
+            Check.SequenceEqual(UInt32Fields(14, 1, 2, 3, 4, 5, 6, 7, 8, 1, 1, 9, 10, 11, 12),
+                CudaProtocol.CreateSelectLayerRequest(request), "CUDA rotated compatibility layout");
+        }
+
+        private static void CheckMixedResidentRequest()
+        {
+            var request = Request();
+            request.Mode = CudaSelectLayerMode.MixedResident;
+            request.DeviceChunkRounds = 0;
+            request.ShapeMask = 15;
+            request.SelectionMode = 1;
+            Check.SequenceEqual(UInt32Fields(15, 1, 2, 3, 4, 5, 6, 7, 8, 1, 1, 9, 10, 11, 12, 15, 1, 0),
+                CudaProtocol.CreateSelectLayerRequest(request), "CUDA mixed compatibility layout");
         }
 
         private static void CheckMixedRequest()

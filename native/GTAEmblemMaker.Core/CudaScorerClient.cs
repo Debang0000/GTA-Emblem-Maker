@@ -197,14 +197,14 @@ namespace GTAEmblemMaker.Core
 
         public Task<CudaSelectLayerResult> SelectLayerAsync(CudaSelectLayerRequest request, CancellationToken cancellationToken)
         {
-            var expectedChainCount = request != null && request.Mode == CudaSelectLayerMode.MixedDeviceChunk
+            var expectedChainCount = request != null && request.IsMixed
                 ? CudaProtocol.ExpectedMixedChainCount(request)
                 : 0;
             var bytes = CudaProtocol.CreateSelectLayerRequest(request);
             return ExchangeAsync(async token =>
             {
                 await WriteAsync(bytes, token).ConfigureAwait(false);
-                if (request.Mode == CudaSelectLayerMode.RotatedDeviceChunk)
+                if (!request.IsMixed)
                 {
                     return CudaProtocol.ParseRotatedResponse(await ReadExactAsync(CudaProtocol.RotatedResponseSize, token).ConfigureAwait(false));
                 }

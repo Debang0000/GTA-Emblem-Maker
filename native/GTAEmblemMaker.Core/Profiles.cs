@@ -95,10 +95,10 @@ namespace GTAEmblemMaker.Core
             var optional = new[] { "beamWidth", "branchFactor", "windowSize", "windowStride", "windowCount", "selectedLayers", "exactLayers", "exactRounds", "pairCandidates" };
             EnsureFieldsWithOptional(value, "pipeline", optional, "runner");
             var runner = RequiredString(value, "runner", "pipeline");
-            if (runner == "greedy")
+            if (runner == "greedy" || runner == "catalog-compatible")
             {
                 if (value.Count != 1) throw new ProfileValidationException("Greedy pipeline does not accept beam or pair settings.");
-                return PipelineSettings.Greedy;
+                return runner == "greedy" ? PipelineSettings.Greedy : PipelineSettings.CatalogCompatible;
             }
             if (runner != "beam" && runner != "beam-pair") throw new ProfileValidationException("Unknown pipeline runner: " + runner);
             RequirePipelineFields(value, "beamWidth", "branchFactor");
@@ -448,6 +448,7 @@ namespace GTAEmblemMaker.Core
     public sealed class PipelineSettings
     {
         public static readonly PipelineSettings Greedy = new PipelineSettings("greedy", 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        public static readonly PipelineSettings CatalogCompatible = new PipelineSettings("catalog-compatible", 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
         public string Runner { get; private set; }
         public int BeamWidth { get; private set; }

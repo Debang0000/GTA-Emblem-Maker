@@ -125,6 +125,7 @@ namespace GTAEmblemMaker.Core
             if (request == null) throw new ArgumentNullException("request");
             cancellationToken.ThrowIfCancellationRequested();
             var stage = FitMath.ResolveStage(request.Profile, "current-image-fit");
+            var compatibilityResident = request.Profile.Pipeline.Runner == "catalog-compatible";
             if (!stage.ResidentSelectLayer || !stage.ResidentDeviceChunk) throw new InvalidOperationException("The selected profile does not use the native resident fitting path.");
             if (request.Source.CanonicalRgba == null || request.Source.CanonicalRgba.Length != Width * Height * 4) throw new ArgumentException("The source image is not a canonical 512x512 RGBA image.", "request");
 
@@ -213,8 +214,9 @@ namespace GTAEmblemMaker.Core
                             strokeLayer ? (uint)stage.StrokeSearch.GuideMode : 0,
                             strokeScale,
                             strokeScale == 1 ? stage.StrokeSearch.DetailMinLength : strokeScale == 2 ? stage.StrokeSearch.ContourMinLength : 0,
-                            strokeScale == 1 ? stage.StrokeSearch.DetailMaxLength : strokeScale == 2 ? stage.StrokeSearch.ContourMaxLength : 0);
-                        var mixed = selectRequest.Mode == CudaSelectLayerMode.MixedDeviceChunk;
+                            strokeScale == 1 ? stage.StrokeSearch.DetailMaxLength : strokeScale == 2 ? stage.StrokeSearch.ContourMaxLength : 0,
+                            compatibilityResident);
+                        var mixed = selectRequest.IsMixed;
                         var selected = await client.SelectLayerAsync(selectRequest, cancellationToken).ConfigureAwait(false);
                         var shapeKind = mixed ? selected.SelectedShapeKind : 0;
                         var candidate = CandidateGenerator.FromResidentResult(shapeKind, selected.SelectedCandidate, selected.SelectedScore);
@@ -243,7 +245,9 @@ namespace GTAEmblemMaker.Core
 
                         states.Add(state);
                         improvements.Add(candidate.OldErrorDelta >= candidate.NewErrorDelta ? candidate.OldErrorDelta - candidate.NewErrorDelta : 0);
-                        baseTotalError = FitMath.ApplyCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError);
+                        baseTotalError = compatibilityResident
+                            ? FitMath.ApplyCompatibilityCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError)
+                            : FitMath.ApplyCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError);
                         trace.Add(new FitLayerTrace(layer, candidate.CandidateId, candidate.PoolShapeFamily, activeChoice.WeightMapId, payloadBuilder.BudgetCodeLength, baseTotalError, candidate.Energy, selected.ServerTotalMs + (catalogSelection == null ? 0 : catalogSelection.ServerMilliseconds), perceptualSelection != null, perceptualSelection != null && perceptualSelection.ChangedSelection, perceptualSelection == null ? 0 : perceptualSelection.Score, perceptualMilliseconds));
                         if (overfitLayers > 0 && layer == totalAttempts && states.Count > maximumLayers)
                         {
@@ -288,9 +292,9 @@ namespace GTAEmblemMaker.Core
                             await client.UpdateCurrentAsync(checked((ulong)withoutRemovedError), withoutRemoved, cancellationToken).ConfigureAwait(false);
 
                             var replacementLayer = checked(totalAttempts + attempt + 1);
-                            var selectRequest = CreateSelectRequest(stage, replacementLayer, replacementShapes);
+                            var selectRequest = CreateSelectRequest(stage, replacementLayer, replacementShapes, compatibilityResident: compatibilityResident);
                             var selected = await client.SelectLayerAsync(selectRequest, cancellationToken).ConfigureAwait(false);
-                            var mixed = selectRequest.Mode == CudaSelectLayerMode.MixedDeviceChunk;
+                            var mixed = selectRequest.IsMixed;
                             var shapeKind = mixed ? selected.SelectedShapeKind : 0;
                             var candidate = CandidateGenerator.FromResidentResult(shapeKind, selected.SelectedCandidate, selected.SelectedScore);
                             PerceptualSelection perceptualSelection = null;
@@ -308,7 +312,9 @@ namespace GTAEmblemMaker.Core
                             proposalStates.Add(replacementState);
                             var proposalBuilder = TryRebuildPayload(proposalStates, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget);
                             var proposalCurrent = (byte[])withoutRemoved.Clone();
-                            var proposalError = FitMath.ApplyCandidateAndUpdateError(target, proposalCurrent, Width, candidate, activeMap.Q8, withoutRemovedError);
+                            var proposalError = compatibilityResident
+                                ? FitMath.ApplyCompatibilityCandidateAndUpdateError(target, proposalCurrent, Width, candidate, activeMap.Q8, withoutRemovedError)
+                                : FitMath.ApplyCandidateAndUpdateError(target, proposalCurrent, Width, candidate, activeMap.Q8, withoutRemovedError);
                             var accepted = proposalBuilder != null && LayerOptimizer.AllowsReplacement(target, current, baseTotalError, proposalCurrent, proposalError, activeMap.Q8, Width, stage.LayerOptimization.ReplacementTileSize, stage.LayerOptimization.MaxTileRegressionPercent);
                             if (accepted)
                             {
@@ -385,7 +391,7 @@ namespace GTAEmblemMaker.Core
             return builder;
         }
 
-        internal static CudaSelectLayerRequest CreateSelectRequest(FitStage stage, int layer, IReadOnlyList<string> shapes, int minAxis = 0, uint guideMode = 0, uint strokeScale = 0, int minLongAxis = 0, int maxLongAxis = 0)
+        internal static CudaSelectLayerRequest CreateSelectRequest(FitStage stage, int layer, IReadOnlyList<string> shapes, int minAxis = 0, uint guideMode = 0, uint strokeScale = 0, int minLongAxis = 0, int maxLongAxis = 0, bool compatibilityResident = false)
         {
             if (stage == null) throw new ArgumentNullException("stage");
             var shapeMask = CandidateGenerator.ShapeMask(shapes);
@@ -393,7 +399,9 @@ namespace GTAEmblemMaker.Core
             var structural = mixed && strokeScale == 1 && stage.StrokeSearch != null ? stage.StrokeSearch.StructuralRefine : null;
             return new CudaSelectLayerRequest
             {
-                Mode = mixed ? CudaSelectLayerMode.MixedDeviceChunk : CudaSelectLayerMode.RotatedDeviceChunk,
+                Mode = mixed
+                    ? (compatibilityResident ? CudaSelectLayerMode.MixedResident : CudaSelectLayerMode.MixedDeviceChunk)
+                    : (compatibilityResident ? CudaSelectLayerMode.RotatedResident : CudaSelectLayerMode.RotatedDeviceChunk),
                 CandidatesPerGroup = CandidateGenerator.CandidatesPerGroup,
                 GroupCount = CandidateGenerator.Multistart,
                 Age = CandidateGenerator.Age,
@@ -414,7 +422,7 @@ namespace GTAEmblemMaker.Core
                 StrokeScale = mixed ? strokeScale : 0,
                 MinLongAxis = mixed ? checked((uint)minLongAxis) : 0,
                 MaxLongAxis = mixed ? checked((uint)maxLongAxis) : 0,
-                DeviceChunkRounds = (uint)Math.Min(stage.ResidentDeviceChunkRounds, CandidateGenerator.EarlyStopRounds),
+                DeviceChunkRounds = compatibilityResident ? 0 : (uint)Math.Min(stage.ResidentDeviceChunkRounds, CandidateGenerator.EarlyStopRounds),
                 StructuralEdgeWeightQ16 = structural == null ? 0 : checked((uint)Math.Round(structural.EdgeDistanceWeight * 65536)),
                 StructuralDistanceLimit = structural == null ? 0 : checked((uint)structural.DistanceLimit),
                 StructuralRounds = structural == null ? 0 : checked((uint)structural.Rounds),
