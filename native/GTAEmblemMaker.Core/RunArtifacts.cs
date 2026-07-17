@@ -85,6 +85,7 @@ namespace GTAEmblemMaker.Core
         private static Dictionary<string, object> Metrics(FitRequest request, FitResult result)
         {
             var stage = FitMath.ResolveStage(request.Profile, "current-image-fit");
+            var counters = result.PerformanceCounters;
             return new Dictionary<string, object>
             {
                 { "engineVersion", EngineInfo.Version },
@@ -100,7 +101,20 @@ namespace GTAEmblemMaker.Core
                 { "baseTotalError", result.BaseTotalError.ToString(CultureInfo.InvariantCulture) },
                 { "weightMapId", result.WeightMapId },
                 { "perceptualBackend", result.PerceptualBackend ?? "none" },
-                { "perceptualModel", stage.PerceptualRerank == null ? "none" : stage.PerceptualRerank.Model }
+                { "perceptualModel", stage.PerceptualRerank == null ? "none" : stage.PerceptualRerank.Model },
+                { "wallMilliseconds", result.WallMilliseconds },
+                { "gpuExchangeCount", counters == null ? 0 : counters.GpuExchangeCount },
+                { "gpuCommandCount", counters == null ? 0 : counters.GpuCommandCount },
+                { "candidatesEvaluated", counters == null ? 0 : counters.CandidatesEvaluated },
+                { "averageBatchSize", counters == null ? 0 : counters.AverageBatchSize },
+                { "hostToDeviceBytes", counters == null ? 0 : counters.HostToDeviceBytes },
+                { "hostDeviceSynchronizationCount", counters == null ? 0 : counters.HostDeviceSynchronizationCount },
+                { "catalogAtlasUploadCount", counters == null ? 0 : counters.CatalogAtlasUploadCount },
+                { "residentCatalogScoreCommandCount", counters == null ? 0 : counters.ResidentCatalogScoreCommandCount },
+                { "residentCatalogGpuKernelCount", counters == null ? 0 : counters.ResidentCatalogGpuKernelCount },
+                { "residentCatalogCandidatesEvaluated", counters == null ? 0 : counters.ResidentCatalogCandidatesEvaluated },
+                { "residentCatalogSynchronizationCount", counters == null ? 0 : counters.ResidentCatalogSynchronizationCount },
+                { "catalogHostToDeviceBytes", counters == null ? 0 : counters.CatalogHostToDeviceBytes }
             };
         }
 

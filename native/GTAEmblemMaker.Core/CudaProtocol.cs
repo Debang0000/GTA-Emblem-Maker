@@ -87,6 +87,18 @@ namespace GTAEmblemMaker.Core
         public IReadOnlyList<CudaScore> Scores { get; internal set; }
     }
 
+    internal sealed class CudaCatalogBatch
+    {
+        internal int AtlasIndex { get; private set; }
+        internal IReadOnlyList<CudaCatalogCandidate> Candidates { get; private set; }
+
+        internal CudaCatalogBatch(int atlasIndex, IReadOnlyList<CudaCatalogCandidate> candidates)
+        {
+            AtlasIndex = atlasIndex;
+            Candidates = candidates ?? throw new ArgumentNullException("candidates");
+        }
+    }
+
     public sealed class CudaChainResult
     {
         public uint ShapeKind { get; internal set; }
@@ -137,6 +149,7 @@ namespace GTAEmblemMaker.Core
         public const uint MaxInitialCandidateCount = 220000;
         public const uint MaxMixedInitialCandidateCount = 880000;
         public const uint MaxMixedChainCount = 64;
+        public const int MaxCatalogAtlasCount = 64;
         public const int RotatedResponseSize = 188;
         public const int MixedResponsePrefixSize = 196;
         public const int MixedChainSize = 68;
@@ -208,6 +221,53 @@ namespace GTAEmblemMaker.Core
             return WriteRequest(writer => writer.Write((uint)4));
         }
 
+        internal static byte[] CreateSetCatalogAtlasesRequest(IReadOnlyList<CatalogMaskAtlasEntry> atlases)
+        {
+            if (atlases == null) throw new ArgumentNullException("atlases");
+            if (atlases.Count == 0 || atlases.Count > MaxCatalogAtlasCount) throw new ArgumentOutOfRangeException("atlases");
+            return WriteRequest(writer =>
+            {
+                writer.Write(25u);
+                writer.Write((uint)atlases.Count);
+                for (var index = 0; index < atlases.Count; index++)
+                {
+                    var atlas = atlases[index];
+                    if (atlas == null || atlas.Size < 32 || atlas.Size > 1024 || atlas.Mask == null || atlas.Mask.Length != checked(atlas.Size * atlas.Size)) throw new ArgumentException("Catalog atlas is invalid.", "atlases");
+                    WriteCatalogMetadata(writer, atlas);
+                    writer.Write(atlas.Mask);
+                }
+            });
+        }
+
+        internal static byte[] CreateResidentCatalogScoreRequest(IReadOnlyList<CudaCatalogBatch> batches, bool weighted)
+        {
+            if (batches == null) throw new ArgumentNullException("batches");
+            if (batches.Count == 0 || batches.Count > MaxCatalogAtlasCount) throw new ArgumentOutOfRangeException("batches");
+            var total = 0;
+            for (var index = 0; index < batches.Count; index++)
+            {
+                var batch = batches[index];
+                if (batch == null || batch.AtlasIndex < 0 || batch.AtlasIndex >= MaxCatalogAtlasCount || batch.Candidates.Count == 0) throw new ArgumentException("Catalog batch is invalid.", "batches");
+                total = checked(total + batch.Candidates.Count);
+            }
+            if (total > MaxMixedInitialCandidateCount) throw new ArgumentOutOfRangeException("batches");
+            return WriteRequest(writer =>
+            {
+                writer.Write(26u);
+                writer.Write(weighted ? 1u : 0u);
+                writer.Write((uint)batches.Count);
+                writer.Write((uint)total);
+                for (var index = 0; index < batches.Count; index++)
+                {
+                    writer.Write((uint)batches[index].AtlasIndex);
+                    writer.Write((uint)batches[index].Candidates.Count);
+                }
+                for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+                    for (var candidateIndex = 0; candidateIndex < batches[batchIndex].Candidates.Count; candidateIndex++)
+                        WriteCatalogCandidate(writer, batches[batchIndex].Candidates[candidateIndex]);
+            });
+        }
+
         internal static byte[] CreateCatalogScoreRequest(CatalogMaskAtlasEntry atlas, IReadOnlyList<CudaCatalogCandidate> candidates, bool weighted)
         {
             if (atlas == null) throw new ArgumentNullException("atlas");
@@ -217,28 +277,35 @@ namespace GTAEmblemMaker.Core
             {
                 writer.Write(weighted ? 24u : 23u);
                 writer.Write((uint)candidates.Count);
-                writer.Write((float)atlas.IntrinsicWidth);
-                writer.Write((float)atlas.IntrinsicHeight);
-                writer.Write((float)atlas.MinX);
-                writer.Write((float)atlas.MinY);
-                writer.Write((float)atlas.MaxX);
-                writer.Write((float)atlas.MaxY);
-                writer.Write((uint)atlas.Size);
+                WriteCatalogMetadata(writer, atlas);
                 writer.Write(atlas.Mask);
                 for (var index = 0; index < candidates.Count; index++)
-                {
-                    var candidate = candidates[index];
-                    if (candidate == null || candidate.Rx <= 0 || candidate.Ry <= 0 || candidate.Alpha < 1 || candidate.Alpha > 255) throw new ArgumentException("Catalog candidate is invalid.", "candidates");
-                    writer.Write(candidate.CandidateId);
-                    writer.Write(checked((int)Math.Round(candidate.Cx * 10000, MidpointRounding.AwayFromZero)));
-                    writer.Write(checked((int)Math.Round(candidate.Cy * 10000, MidpointRounding.AwayFromZero)));
-                    writer.Write(checked((int)Math.Round(candidate.Rx * 10000, MidpointRounding.AwayFromZero)));
-                    writer.Write(checked((int)Math.Round(candidate.Ry * 10000, MidpointRounding.AwayFromZero)));
-                    writer.Write(candidate.Alpha);
-                    writer.Write(candidate.AngleDegrees);
-                    writer.Write(0u);
-                }
+                    WriteCatalogCandidate(writer, candidates[index]);
             });
+        }
+
+        private static void WriteCatalogMetadata(BinaryWriter writer, CatalogMaskAtlasEntry atlas)
+        {
+            writer.Write((float)atlas.IntrinsicWidth);
+            writer.Write((float)atlas.IntrinsicHeight);
+            writer.Write((float)atlas.MinX);
+            writer.Write((float)atlas.MinY);
+            writer.Write((float)atlas.MaxX);
+            writer.Write((float)atlas.MaxY);
+            writer.Write((uint)atlas.Size);
+        }
+
+        private static void WriteCatalogCandidate(BinaryWriter writer, CudaCatalogCandidate candidate)
+        {
+            if (candidate == null || candidate.Rx <= 0 || candidate.Ry <= 0 || candidate.Alpha < 1 || candidate.Alpha > 255) throw new ArgumentException("Catalog candidate is invalid.", "candidate");
+            writer.Write(candidate.CandidateId);
+            writer.Write(checked((int)Math.Round(candidate.Cx * 10000, MidpointRounding.AwayFromZero)));
+            writer.Write(checked((int)Math.Round(candidate.Cy * 10000, MidpointRounding.AwayFromZero)));
+            writer.Write(checked((int)Math.Round(candidate.Rx * 10000, MidpointRounding.AwayFromZero)));
+            writer.Write(checked((int)Math.Round(candidate.Ry * 10000, MidpointRounding.AwayFromZero)));
+            writer.Write(candidate.Alpha);
+            writer.Write(candidate.AngleDegrees);
+            writer.Write(0u);
         }
 
         public static byte[] CreateSelectLayerRequest(CudaSelectLayerRequest request)

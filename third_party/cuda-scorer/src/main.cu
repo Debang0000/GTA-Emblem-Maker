@@ -56,6 +56,8 @@ enum ServerCommand : std::uint32_t {
     CMD_RESIDENT_SELECT_LAYER_STRUCTURAL_DEVICE_CHUNK = 22,
     CMD_SCORE_BATCH_CATALOG_GEOMETRY = 23,
     CMD_SCORE_BATCH_CATALOG_GEOMETRY_WEIGHTED = 24,
+    CMD_SET_CATALOG_ATLASES = 25,
+    CMD_SCORE_RESIDENT_CATALOG_BATCHES = 26,
 };
 
 constexpr int GEOMETRY_ELLIPSE = 0;
@@ -75,6 +77,11 @@ struct CatalogMaskMetadata {
     float maxX;
     float maxY;
     std::uint32_t size;
+};
+
+struct ResidentCatalogAtlas {
+    CatalogMaskMetadata metadata{};
+    std::size_t offset = 0;
 };
 
 static bool check(cudaError_t err, const char* step) {
@@ -2188,9 +2195,12 @@ struct ServerState {
     CandidateRecord* d_candidates = nullptr;
     ScoreRecord* d_output = nullptr;
     std::uint8_t* d_catalog_mask = nullptr;
+    std::uint8_t* d_resident_catalog_masks = nullptr;
+    std::vector<ResidentCatalogAtlas> residentCatalogAtlases;
     std::size_t candidateCapacity = 0;
     std::size_t outputCapacity = 0;
     std::size_t catalogMaskCapacity = 0;
+    std::size_t residentCatalogMaskCapacity = 0;
 
     ~ServerState() {
         cudaFree(d_target);
@@ -2201,6 +2211,7 @@ struct ServerState {
         cudaFree(d_candidates);
         cudaFree(d_output);
         cudaFree(d_catalog_mask);
+        cudaFree(d_resident_catalog_masks);
     }
 
     void ensure_buffers(std::size_t candidate_count) {
@@ -2221,6 +2232,13 @@ struct ServerState {
         cudaFree(d_catalog_mask);
         require_cuda(cudaMalloc(&d_catalog_mask, bytes), "server cudaMalloc catalog mask");
         catalogMaskCapacity = bytes;
+    }
+
+    void ensure_resident_catalog_masks(std::size_t bytes) {
+        if (bytes <= residentCatalogMaskCapacity) return;
+        cudaFree(d_resident_catalog_masks);
+        require_cuda(cudaMalloc(&d_resident_catalog_masks, bytes), "server cudaMalloc resident catalog masks");
+        residentCatalogMaskCapacity = bytes;
     }
 };
 
@@ -2621,6 +2639,118 @@ static void server_score_batch_catalog_geometry(ServerState& state, bool weighte
     if (!scores.empty()) {
         require_cuda(cudaMemcpy(scores.data(), state.d_output, scores.size() * sizeof(ScoreRecord), cudaMemcpyDeviceToHost), "server cudaMemcpy catalog output");
     }
+    const auto d2h_end = std::chrono::steady_clock::now();
+    const std::uint32_t status = 0;
+    write_stdout_value(status);
+    write_stdout_value(candidate_count_u32);
+    write_stdout_value(elapsed_ms(h2d_start, h2d_end));
+    write_stdout_value(static_cast<double>(kernel_ms));
+    write_stdout_value(elapsed_ms(d2h_start, d2h_end));
+    write_stdout_value(elapsed_ms(total_start, std::chrono::steady_clock::now()));
+    write_stdout_bytes(scores.data(), scores.size() * sizeof(ScoreRecord));
+    std::cout.flush();
+}
+
+static bool valid_catalog_metadata(const CatalogMaskMetadata& metadata) {
+    return metadata.size >= 32 && metadata.size <= 1024 && metadata.intrinsicWidth > 0 && metadata.intrinsicHeight > 0 &&
+        metadata.maxX > metadata.minX && metadata.maxY > metadata.minY;
+}
+
+static void server_set_catalog_atlases(ServerState& state) {
+    std::uint32_t atlas_count = 0;
+    if (!read_stdin_value(atlas_count) || atlas_count == 0 || atlas_count > 64) {
+        throw std::runtime_error("invalid SET_CATALOG_ATLASES count");
+    }
+    std::vector<ResidentCatalogAtlas> atlases(atlas_count);
+    std::vector<std::uint8_t> masks;
+    for (std::uint32_t index = 0; index < atlas_count; index++) {
+        CatalogMaskMetadata metadata{};
+        if (!read_stdin_value(metadata) || !valid_catalog_metadata(metadata)) {
+            throw std::runtime_error("invalid SET_CATALOG_ATLASES metadata");
+        }
+        const std::size_t mask_bytes = static_cast<std::size_t>(metadata.size) * metadata.size;
+        const std::size_t offset = masks.size();
+        masks.resize(offset + mask_bytes);
+        read_stdin_bytes(masks.data() + offset, mask_bytes, "resident catalog mask");
+        atlases[index].metadata = metadata;
+        atlases[index].offset = offset;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    state.ensure_resident_catalog_masks(masks.size());
+    require_cuda(cudaMemcpy(state.d_resident_catalog_masks, masks.data(), masks.size(), cudaMemcpyHostToDevice), "server cudaMemcpy resident catalog masks");
+    state.residentCatalogAtlases = atlases;
+    const std::uint32_t status = 0;
+    write_stdout_value(status);
+    write_stdout_value(elapsed_ms(start, std::chrono::steady_clock::now()));
+    std::cout.flush();
+}
+
+static void server_score_resident_catalog_batches(ServerState& state) {
+    if (!state.d_target || !state.d_current || state.residentCatalogAtlases.empty() || !state.d_resident_catalog_masks) {
+        throw std::runtime_error("SCORE_RESIDENT_CATALOG_BATCHES before INIT/SET_CATALOG_ATLASES");
+    }
+    std::uint32_t weighted = 0;
+    std::uint32_t batch_count = 0;
+    std::uint32_t candidate_count_u32 = 0;
+    if (!read_stdin_value(weighted) || !read_stdin_value(batch_count) || !read_stdin_value(candidate_count_u32) ||
+        weighted > 1 || batch_count == 0 || batch_count > 64 || candidate_count_u32 == 0 || candidate_count_u32 > 880000 ||
+        (weighted != 0 && !state.d_weights)) {
+        throw std::runtime_error("invalid SCORE_RESIDENT_CATALOG_BATCHES header");
+    }
+    std::vector<std::uint32_t> atlas_indices(batch_count);
+    std::vector<std::uint32_t> batch_counts(batch_count);
+    std::size_t total = 0;
+    for (std::uint32_t index = 0; index < batch_count; index++) {
+        if (!read_stdin_value(atlas_indices[index]) || !read_stdin_value(batch_counts[index]) ||
+            atlas_indices[index] >= state.residentCatalogAtlases.size() || batch_counts[index] == 0) {
+            throw std::runtime_error("invalid SCORE_RESIDENT_CATALOG_BATCHES descriptor");
+        }
+        total += batch_counts[index];
+    }
+    if (total != candidate_count_u32) throw std::runtime_error("SCORE_RESIDENT_CATALOG_BATCHES count mismatch");
+
+    std::vector<RotatedCandidateRecord> candidates(total);
+    read_stdin_bytes(candidates.data(), candidates.size() * sizeof(RotatedCandidateRecord), "resident catalog candidates");
+    const auto total_start = std::chrono::steady_clock::now();
+    state.ensure_buffers(total);
+    const auto h2d_start = std::chrono::steady_clock::now();
+    require_cuda(cudaMemcpy(state.d_candidates, candidates.data(), candidates.size() * sizeof(RotatedCandidateRecord), cudaMemcpyHostToDevice), "server cudaMemcpy resident catalog candidates");
+    const auto h2d_end = std::chrono::steady_clock::now();
+
+    cudaEvent_t kernel_begin{};
+    cudaEvent_t kernel_end{};
+    require_cuda(cudaEventCreate(&kernel_begin), "cudaEventCreate resident catalog begin");
+    require_cuda(cudaEventCreate(&kernel_end), "cudaEventCreate resident catalog end");
+    require_cuda(cudaEventRecord(kernel_begin), "cudaEventRecord resident catalog begin");
+    std::size_t candidate_offset = 0;
+    for (std::uint32_t batch = 0; batch < batch_count; batch++) {
+        const ResidentCatalogAtlas& atlas = state.residentCatalogAtlases[atlas_indices[batch]];
+        const std::size_t count = batch_counts[batch];
+        score_batch_catalog_geometry_kernel<<<static_cast<unsigned int>(count), 256>>>(
+            state.d_target,
+            state.d_current,
+            weighted != 0 ? state.d_weights : nullptr,
+            reinterpret_cast<RotatedCandidateRecord*>(state.d_candidates) + candidate_offset,
+            state.d_output + candidate_offset,
+            state.metadata.width,
+            state.metadata.height,
+            state.metadata.baseTotalError,
+            state.d_resident_catalog_masks + atlas.offset,
+            atlas.metadata);
+        require_cuda(cudaGetLastError(), "score resident catalog batch launch");
+        candidate_offset += count;
+    }
+    require_cuda(cudaEventRecord(kernel_end), "cudaEventRecord resident catalog end");
+    require_cuda(cudaEventSynchronize(kernel_end), "cudaEventSynchronize resident catalog end");
+    float kernel_ms = 0;
+    require_cuda(cudaEventElapsedTime(&kernel_ms, kernel_begin, kernel_end), "cudaEventElapsedTime resident catalog");
+    cudaEventDestroy(kernel_begin);
+    cudaEventDestroy(kernel_end);
+
+    std::vector<ScoreRecord> scores(total);
+    const auto d2h_start = std::chrono::steady_clock::now();
+    require_cuda(cudaMemcpy(scores.data(), state.d_output, scores.size() * sizeof(ScoreRecord), cudaMemcpyDeviceToHost), "server cudaMemcpy resident catalog output");
     const auto d2h_end = std::chrono::steady_clock::now();
     const std::uint32_t status = 0;
     write_stdout_value(status);
@@ -4328,6 +4458,10 @@ static int run_server() {
             server_score_batch_catalog_geometry(state, false);
         } else if (command == CMD_SCORE_BATCH_CATALOG_GEOMETRY_WEIGHTED) {
             server_score_batch_catalog_geometry(state, true);
+        } else if (command == CMD_SET_CATALOG_ATLASES) {
+            server_set_catalog_atlases(state);
+        } else if (command == CMD_SCORE_RESIDENT_CATALOG_BATCHES) {
+            server_score_resident_catalog_batches(state);
         } else if (command == CMD_UPDATE_CURRENT) {
             server_update_current(state);
         } else if (command == CMD_SHUTDOWN) {

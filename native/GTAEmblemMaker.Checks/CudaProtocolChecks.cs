@@ -16,6 +16,8 @@ namespace GTAEmblemMaker.Checks
             CheckSetStructuralGuideRequest();
             CheckUpdateCurrentRequest();
             CheckShutdownRequest();
+            CheckSetCatalogAtlasesRequest();
+            CheckResidentCatalogBatchRequest();
             CheckRotatedResidentRequest();
             CheckMixedResidentRequest();
             CheckRotatedRequest();
@@ -74,6 +76,32 @@ namespace GTAEmblemMaker.Checks
         private static void CheckShutdownRequest()
         {
             Check.SequenceEqual(new byte[] { 4, 0, 0, 0 }, CudaProtocol.CreateShutdownRequest(), "CUDA SHUTDOWN layout");
+        }
+
+        private static void CheckSetCatalogAtlasesRequest()
+        {
+            var atlas = CatalogMaskAtlas.Build(32)[0];
+            var request = CudaProtocol.CreateSetCatalogAtlasesRequest(new[] { atlas });
+            Check.Equal(25, BitConverter.ToInt32(request, 0), "CUDA resident catalog atlas command");
+            Check.Equal(1, BitConverter.ToInt32(request, 4), "CUDA resident catalog atlas count");
+            Check.Equal(8 + 28 + 32 * 32, request.Length, "CUDA resident catalog atlas payload length");
+        }
+
+        private static void CheckResidentCatalogBatchRequest()
+        {
+            var candidates = new[]
+            {
+                new CudaCatalogCandidate { CandidateId = 7, Cx = 1, Cy = 2, Rx = 3, Ry = 4, Alpha = 5, AngleDegrees = 6 },
+                new CudaCatalogCandidate { CandidateId = 8, Cx = 9, Cy = 10, Rx = 11, Ry = 12, Alpha = 13, AngleDegrees = 14 }
+            };
+            var request = CudaProtocol.CreateResidentCatalogScoreRequest(new[] { new CudaCatalogBatch(3, candidates) }, true);
+            Check.Equal(26, BitConverter.ToInt32(request, 0), "CUDA resident catalog score command");
+            Check.Equal(1, BitConverter.ToInt32(request, 4), "CUDA resident catalog weighted flag");
+            Check.Equal(1, BitConverter.ToInt32(request, 8), "CUDA resident catalog batch count");
+            Check.Equal(2, BitConverter.ToInt32(request, 12), "CUDA resident catalog candidate count");
+            Check.Equal(3, BitConverter.ToInt32(request, 16), "CUDA resident catalog atlas index");
+            Check.Equal(2, BitConverter.ToInt32(request, 20), "CUDA resident catalog batch candidate count");
+            Check.Equal(88, request.Length, "CUDA resident catalog score payload length");
         }
 
         private static void CheckRotatedRequest()

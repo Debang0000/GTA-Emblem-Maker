@@ -8,6 +8,37 @@ using System.Threading.Tasks;
 
 namespace GTAEmblemMaker.Core
 {
+    public sealed class CudaPerformanceCounters
+    {
+        public long GpuExchangeCount { get; private set; }
+        public long GpuCommandCount { get; private set; }
+        public long CandidatesEvaluated { get; private set; }
+        public double AverageBatchSize { get { return GpuCommandCount == 0 ? 0 : CandidatesEvaluated / (double)GpuCommandCount; } }
+        public long HostToDeviceBytes { get; private set; }
+        public long HostDeviceSynchronizationCount { get; private set; }
+        public long CatalogAtlasUploadCount { get; private set; }
+        public long ResidentCatalogScoreCommandCount { get; private set; }
+        public long ResidentCatalogCandidatesEvaluated { get; private set; }
+        public long ResidentCatalogGpuKernelCount { get; private set; }
+        public long ResidentCatalogSynchronizationCount { get; private set; }
+        public long CatalogHostToDeviceBytes { get; private set; }
+
+        internal CudaPerformanceCounters(long exchanges, long commands, long allCandidates, long allHostToDeviceBytes, long allSynchronizations, long atlasUploads, long scoreCommands, long candidates, long kernels, long synchronizations, long hostToDeviceBytes)
+        {
+            GpuExchangeCount = exchanges;
+            GpuCommandCount = commands;
+            CandidatesEvaluated = allCandidates;
+            HostToDeviceBytes = allHostToDeviceBytes;
+            HostDeviceSynchronizationCount = allSynchronizations;
+            CatalogAtlasUploadCount = atlasUploads;
+            ResidentCatalogScoreCommandCount = scoreCommands;
+            ResidentCatalogCandidatesEvaluated = candidates;
+            ResidentCatalogGpuKernelCount = kernels;
+            ResidentCatalogSynchronizationCount = synchronizations;
+            CatalogHostToDeviceBytes = hostToDeviceBytes;
+        }
+    }
+
     public sealed class CudaScorerClient : IDisposable
     {
         private const int StartupTimeoutMilliseconds = 30000;
@@ -24,6 +55,18 @@ namespace GTAEmblemMaker.Core
         private readonly object errorLock = new object();
         private int disposed;
         private int faulted;
+        private string catalogAtlasKey;
+        private long gpuExchangeCount;
+        private long gpuCommandCount;
+        private long candidatesEvaluated;
+        private long hostToDeviceBytes;
+        private long hostDeviceSynchronizationCount;
+        private long catalogAtlasUploadCount;
+        private long residentCatalogScoreCommandCount;
+        private long residentCatalogCandidatesEvaluated;
+        private long residentCatalogGpuKernelCount;
+        private long residentCatalogSynchronizationCount;
+        private long catalogHostToDeviceBytes;
 
         private CudaScorerClient(Process process, int imageBytes)
         {
@@ -40,6 +83,25 @@ namespace GTAEmblemMaker.Core
             get
             {
                 lock (errorLock) return standardError.ToString();
+            }
+        }
+
+        public CudaPerformanceCounters PerformanceCounters
+        {
+            get
+            {
+                return new CudaPerformanceCounters(
+                    Interlocked.Read(ref gpuExchangeCount),
+                    Interlocked.Read(ref gpuCommandCount),
+                    Interlocked.Read(ref candidatesEvaluated),
+                    Interlocked.Read(ref hostToDeviceBytes),
+                    Interlocked.Read(ref hostDeviceSynchronizationCount),
+                    Interlocked.Read(ref catalogAtlasUploadCount),
+                    Interlocked.Read(ref residentCatalogScoreCommandCount),
+                    Interlocked.Read(ref residentCatalogCandidatesEvaluated),
+                    Interlocked.Read(ref residentCatalogGpuKernelCount),
+                    Interlocked.Read(ref residentCatalogSynchronizationCount),
+                    Interlocked.Read(ref catalogHostToDeviceBytes));
             }
         }
 
@@ -101,6 +163,8 @@ namespace GTAEmblemMaker.Core
                         client.output.Flush();
                         var response = ReadExact(client.input, 12);
                         CudaProtocol.ParseTimingResponse("INIT", response);
+                        client.RecordTransfer(checked((long)imageBytes * 2), 2);
+                        Interlocked.Increment(ref client.gpuExchangeCount);
                         return client;
                     }
                     catch (Exception exception)
@@ -131,16 +195,19 @@ namespace GTAEmblemMaker.Core
             return total;
         }
 
-        public Task<double> SetWeightMapAsync(byte[] weights, CancellationToken cancellationToken)
+        public async Task<double> SetWeightMapAsync(byte[] weights, CancellationToken cancellationToken)
         {
             if (weights == null) throw new ArgumentNullException("weights");
             if (weights.Length != imageBytes / 2) throw new ArgumentException("Weight map has the wrong length.", "weights");
             var request = CudaProtocol.CreateSetWeightMapRequest(weights);
-            return ExchangeAsync(async token =>
+            var milliseconds = await ExchangeAsync(async token =>
             {
                 await WriteAsync(request, token).ConfigureAwait(false);
                 return CudaProtocol.ParseTimingResponse("SET_WEIGHT_MAP", await ReadExactAsync(12, token).ConfigureAwait(false));
-            }, cancellationToken);
+            }, cancellationToken).ConfigureAwait(false);
+            RecordTransfer(weights.Length, 1);
+            Interlocked.Increment(ref gpuExchangeCount);
+            return milliseconds;
         }
 
         public Task<double> SetStrokeGuideAsync(byte[] saliencyQ8, byte[] tangentQ8, CancellationToken cancellationToken)
@@ -183,25 +250,28 @@ namespace GTAEmblemMaker.Core
             }, cancellationToken);
         }
 
-        public Task<double> UpdateCurrentAsync(ulong baseTotalError, byte[] current, CancellationToken cancellationToken)
+        public async Task<double> UpdateCurrentAsync(ulong baseTotalError, byte[] current, CancellationToken cancellationToken)
         {
             if (current == null) throw new ArgumentNullException("current");
             if (current.Length != imageBytes) throw new ArgumentException("Current image has the wrong length.", "current");
             var request = CudaProtocol.CreateUpdateCurrentRequest(baseTotalError, current);
-            return ExchangeAsync(async token =>
+            var milliseconds = await ExchangeAsync(async token =>
             {
                 await WriteAsync(request, token).ConfigureAwait(false);
                 return CudaProtocol.ParseTimingResponse("UPDATE_CURRENT", await ReadExactAsync(12, token).ConfigureAwait(false));
-            }, cancellationToken);
+            }, cancellationToken).ConfigureAwait(false);
+            RecordTransfer(current.Length, 1);
+            Interlocked.Increment(ref gpuExchangeCount);
+            return milliseconds;
         }
 
-        public Task<CudaSelectLayerResult> SelectLayerAsync(CudaSelectLayerRequest request, CancellationToken cancellationToken)
+        public async Task<CudaSelectLayerResult> SelectLayerAsync(CudaSelectLayerRequest request, CancellationToken cancellationToken)
         {
             var expectedChainCount = request != null && request.IsMixed
                 ? CudaProtocol.ExpectedMixedChainCount(request)
                 : 0;
             var bytes = CudaProtocol.CreateSelectLayerRequest(request);
-            return ExchangeAsync(async token =>
+            var result = await ExchangeAsync(async token =>
             {
                 await WriteAsync(bytes, token).ConfigureAwait(false);
                 if (!request.IsMixed)
@@ -214,7 +284,16 @@ namespace GTAEmblemMaker.Core
                 if (chainCount != expectedChainCount) throw new InvalidDataException("Mixed response chain count does not match the request.");
                 var tail = await ReadExactAsync(checked((int)chainCount * CudaProtocol.MixedChainSize), token).ConfigureAwait(false);
                 return CudaProtocol.ParseMixedResponse(prefix, tail);
-            }, cancellationToken);
+            }, cancellationToken).ConfigureAwait(false);
+            var commands = checked((long)result.RandomScorerCalls + result.ProposalScorerCalls);
+            var candidates = checked((long)result.InitialCandidateCount + result.ProposalScores);
+            Interlocked.Increment(ref gpuExchangeCount);
+            Interlocked.Add(ref gpuCommandCount, commands);
+            Interlocked.Add(ref candidatesEvaluated, candidates);
+            Interlocked.Add(ref hostDeviceSynchronizationCount, commands);
+            if (request.Mode == CudaSelectLayerMode.RotatedResident || request.Mode == CudaSelectLayerMode.MixedResident)
+                Interlocked.Add(ref hostToDeviceBytes, checked(candidates * 32));
+            return result;
         }
 
         internal Task<CudaCatalogScoreResult> ScoreCatalogAsync(CatalogMaskAtlasEntry atlas, IReadOnlyList<CudaCatalogCandidate> candidates, bool weighted, CancellationToken cancellationToken)
@@ -227,6 +306,69 @@ namespace GTAEmblemMaker.Core
                 var tail = await ReadExactAsync(checked(candidates.Count * 32), token).ConfigureAwait(false);
                 return CudaProtocol.ParseCatalogScoreResponse(prefix, tail, candidates.Count);
             }, cancellationToken);
+        }
+
+        internal async Task<double> SetCatalogAtlasesAsync(IReadOnlyList<CatalogMaskAtlasEntry> atlases, CancellationToken cancellationToken)
+        {
+            var key = CatalogAtlasKey(atlases);
+            if (String.Equals(key, catalogAtlasKey, StringComparison.Ordinal)) return 0;
+            var request = CudaProtocol.CreateSetCatalogAtlasesRequest(atlases);
+            var milliseconds = await ExchangeAsync(async token =>
+            {
+                await WriteAsync(request, token).ConfigureAwait(false);
+                return CudaProtocol.ParseTimingResponse("SET_CATALOG_ATLASES", await ReadExactAsync(12, token).ConfigureAwait(false));
+            }, cancellationToken).ConfigureAwait(false);
+            catalogAtlasKey = key;
+            var maskBytes = 0L;
+            for (var index = 0; index < atlases.Count; index++) maskBytes = checked(maskBytes + atlases[index].Mask.Length);
+            Interlocked.Increment(ref catalogAtlasUploadCount);
+            Interlocked.Add(ref catalogHostToDeviceBytes, maskBytes);
+            Interlocked.Increment(ref gpuExchangeCount);
+            RecordTransfer(maskBytes, 1);
+            return milliseconds;
+        }
+
+        internal async Task<CudaCatalogScoreResult> ScoreResidentCatalogAsync(IReadOnlyList<CudaCatalogBatch> batches, bool weighted, CancellationToken cancellationToken)
+        {
+            var count = 0;
+            for (var index = 0; index < batches.Count; index++) count = checked(count + batches[index].Candidates.Count);
+            var request = CudaProtocol.CreateResidentCatalogScoreRequest(batches, weighted);
+            var result = await ExchangeAsync(async token =>
+            {
+                await WriteAsync(request, token).ConfigureAwait(false);
+                var prefix = await ReadExactAsync(CudaProtocol.CatalogResponsePrefixSize, token).ConfigureAwait(false);
+                var tail = await ReadExactAsync(checked(count * 32), token).ConfigureAwait(false);
+                return CudaProtocol.ParseCatalogScoreResponse(prefix, tail, count);
+            }, cancellationToken).ConfigureAwait(false);
+            Interlocked.Increment(ref residentCatalogScoreCommandCount);
+            Interlocked.Add(ref residentCatalogCandidatesEvaluated, count);
+            Interlocked.Add(ref residentCatalogGpuKernelCount, batches.Count);
+            Interlocked.Increment(ref residentCatalogSynchronizationCount);
+            Interlocked.Add(ref catalogHostToDeviceBytes, checked((long)count * 32));
+            Interlocked.Increment(ref gpuExchangeCount);
+            Interlocked.Add(ref gpuCommandCount, batches.Count);
+            Interlocked.Add(ref candidatesEvaluated, count);
+            Interlocked.Add(ref hostToDeviceBytes, checked((long)count * 32));
+            Interlocked.Increment(ref hostDeviceSynchronizationCount);
+            return result;
+        }
+
+        private void RecordTransfer(long bytes, long synchronizations)
+        {
+            Interlocked.Add(ref hostToDeviceBytes, bytes);
+            Interlocked.Add(ref hostDeviceSynchronizationCount, synchronizations);
+        }
+
+        private static string CatalogAtlasKey(IReadOnlyList<CatalogMaskAtlasEntry> atlases)
+        {
+            if (atlases == null) throw new ArgumentNullException("atlases");
+            var value = new StringBuilder();
+            for (var index = 0; index < atlases.Count; index++)
+            {
+                if (index != 0) value.Append('|');
+                value.Append(atlases[index].Identifier).Append(':').Append(atlases[index].Size);
+            }
+            return value.ToString();
         }
 
         public void Dispose()

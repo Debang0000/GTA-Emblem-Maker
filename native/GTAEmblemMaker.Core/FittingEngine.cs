@@ -98,8 +98,15 @@ namespace GTAEmblemMaker.Core
         public long BaseTotalError { get; private set; }
         public string WeightMapId { get; private set; }
         public string PerceptualBackend { get; private set; }
+        public CudaPerformanceCounters PerformanceCounters { get; private set; }
+        public double WallMilliseconds { get; private set; }
 
         internal FitResult(List<ShapeState> shapes, List<FitLayerTrace> trace, byte[] currentRgba, RockstarPayload payload, bool budgetReached, long baseTotalError, string weightMapId, string perceptualBackend)
+            : this(shapes, trace, currentRgba, payload, budgetReached, baseTotalError, weightMapId, perceptualBackend, null, 0)
+        {
+        }
+
+        internal FitResult(List<ShapeState> shapes, List<FitLayerTrace> trace, byte[] currentRgba, RockstarPayload payload, bool budgetReached, long baseTotalError, string weightMapId, string perceptualBackend, CudaPerformanceCounters performanceCounters, double wallMilliseconds)
         {
             Shapes = new ReadOnlyCollection<ShapeState>(shapes);
             Trace = new ReadOnlyCollection<FitLayerTrace>(trace);
@@ -110,6 +117,8 @@ namespace GTAEmblemMaker.Core
             BaseTotalError = baseTotalError;
             WeightMapId = weightMapId;
             PerceptualBackend = perceptualBackend;
+            PerformanceCounters = performanceCounters;
+            WallMilliseconds = wallMilliseconds;
         }
     }
 
@@ -123,6 +132,7 @@ namespace GTAEmblemMaker.Core
         public static async Task<FitResult> RunAsync(FitRequest request, IProgress<FitProgress> progress, CancellationToken cancellationToken)
         {
             if (request == null) throw new ArgumentNullException("request");
+            var runClock = Stopwatch.StartNew();
             cancellationToken.ThrowIfCancellationRequested();
             var stage = FitMath.ResolveStage(request.Profile, "current-image-fit");
             var compatibilityResident = request.Profile.Pipeline.Runner == "catalog-compatible";
@@ -165,6 +175,7 @@ namespace GTAEmblemMaker.Core
             var needsPerceptual = stage.PerceptualRerank != null && totalAttempts >= stage.PerceptualRerank.FirstRerankLayer;
             if (needsPerceptual && String.IsNullOrWhiteSpace(request.PerceptualModelFolder)) throw new ArgumentException("The selected profile requires its packaged perceptual model.", "request");
             var perceptual = needsPerceptual ? PerceptualClient.Start(request.PerceptualModelFolder, stage.PerceptualRerank, cancellationToken) : null;
+            CudaPerformanceCounters performanceCounters = null;
 
             try
             {
@@ -340,6 +351,7 @@ namespace GTAEmblemMaker.Core
                             }
                         }
                     }
+                    performanceCounters = client.PerformanceCounters;
                 }
             }
             finally
@@ -347,7 +359,8 @@ namespace GTAEmblemMaker.Core
                 if (perceptual != null) perceptual.Dispose();
             }
 
-            return new FitResult(states, trace, current, payloadBuilder.Build(), budgetReached, baseTotalError, activeChoice.WeightMapId, perceptual == null ? null : perceptual.BackendName);
+            runClock.Stop();
+            return new FitResult(states, trace, current, payloadBuilder.Build(), budgetReached, baseTotalError, activeChoice.WeightMapId, perceptual == null ? null : perceptual.BackendName, performanceCounters, runClock.Elapsed.TotalMilliseconds);
         }
 
         internal static FitCandidate ChooseLowestEnergyCandidate(FitCandidate historical, IReadOnlyList<FitCandidate> catalogCandidates)
