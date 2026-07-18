@@ -7,22 +7,22 @@
     <g transform="translate(38 70)">
       <rect width="368" height="100" rx="12" fill="#102019" stroke="#285b45"/>
       <rect x="18" y="18" width="34" height="34" rx="8" fill="#173d2d"/><path d="M27 30h16v11H27zM30 27h10" fill="none" stroke="#7fffc2" stroke-width="2"/>
-      <text x="67" y="38" fill="#f0f7f3" font-size="18" font-weight="700">Native Windows UI</text><text x="67" y="64" fill="#a7b9b0" font-size="13">WPF app with no browser runtime.</text>
+      <text x="67" y="38" fill="#f0f7f3" font-size="18" font-weight="700">Made for Complex Images</text><text x="67" y="64" fill="#a7b9b0" font-size="13">Fit structure beyond simple logo outlines.</text>
     </g>
     <g transform="translate(434 70)">
       <rect width="368" height="100" rx="12" fill="#102019" stroke="#285b45"/>
       <rect x="18" y="18" width="34" height="34" rx="8" fill="#173d2d"/><path d="M26 35h18M35 26v18M29 29l12 12M41 29L29 41" stroke="#7fffc2" stroke-width="2"/>
-      <text x="67" y="38" fill="#f0f7f3" font-size="18" font-weight="700">CUDA Search</text><text x="67" y="64" fill="#a7b9b0" font-size="13">Persistent GPU scoring for layer fitting.</text>
+      <text x="67" y="38" fill="#f0f7f3" font-size="18" font-weight="700">Quality Over Instant Results</text><text x="67" y="64" fill="#a7b9b0" font-size="13">Spend search time where detail can survive.</text>
     </g>
     <g transform="translate(38 194)">
       <rect width="368" height="100" rx="12" fill="#18180e" stroke="#68531d"/>
       <rect x="18" y="18" width="34" height="34" rx="8" fill="#302a12"/><path d="M35 25c9 11 11 15 11 20a11 11 0 1 1-22 0c0-5 3-10 11-20z" fill="none" stroke="#ffe091" stroke-width="2"/>
-      <text x="67" y="38" fill="#fff8df" font-size="18" font-weight="700">Alpha-Aware</text><text x="67" y="64" fill="#c6bfa4" font-size="13">Transparent sources stay transparent.</text>
+      <text x="67" y="38" fill="#fff8df" font-size="18" font-weight="700">Budget-Aware Detail Fitting</text><text x="67" y="64" fill="#c6bfa4" font-size="13">Improve detail without exceeding save limits.</text>
     </g>
     <g transform="translate(434 194)">
       <rect width="368" height="100" rx="12" fill="#18180e" stroke="#68531d"/>
       <rect x="18" y="18" width="34" height="34" rx="8" fill="#302a12"/><path d="M26 27h18v18H26zM30 31h10v10H30z" fill="none" stroke="#ffe091" stroke-width="2"/>
-      <text x="67" y="38" fill="#fff8df" font-size="18" font-weight="700">Three Pipelines</text><text x="67" y="64" fill="#c6bfa4" font-size="13">Compare pixel, perceptual, and catalog fits.</text>
+      <text x="67" y="38" fill="#fff8df" font-size="18" font-weight="700">Save-Ready Rockstar Output</text><text x="67" y="64" fill="#c6bfa4" font-size="13">Verified SVG and layer data for Social Club.</text>
     </g>
   </g>
 </svg>

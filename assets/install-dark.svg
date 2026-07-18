@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 168" width="840" height="168" role="img" aria-labelledby="title">
-  <title id="title">Download, extract, run</title>
-  <defs><linearGradient id="line"><stop stop-color="#19c37d"/><stop offset="1" stop-color="#f6c453"/></linearGradient></defs>
-  <rect width="840" height="168" rx="16" fill="#08120f"/>
-  <rect x="28" y="28" width="784" height="112" rx="12" fill="#0d1b16" stroke="#2b4f40"/>
-  <circle cx="53" cy="51" r="5" fill="#ff6b6b"/><circle cx="70" cy="51" r="5" fill="#f6c453"/><circle cx="87" cy="51" r="5" fill="#19c37d"/>
-  <text x="53" y="95" fill="#eef6f2" font-family="'Courier New', monospace" font-size="17"><tspan fill="#7fffc2">01</tspan><tspan> Download .zip</tspan><tspan fill="#5f7b6e">  →  </tspan><tspan fill="#ffe091">02</tspan><tspan> Extract</tspan><tspan fill="#5f7b6e">  →  </tspan><tspan fill="#7fffc2">03</tspan><tspan> Run GTAEmblemMaker.exe</tspan></text>
-  <rect x="53" y="116" width="734" height="2" rx="1" fill="url(#line)"><animate attributeName="opacity" values="0.35;1;0.35" dur="3s" repeatCount="indefinite"/></rect>
-</svg>

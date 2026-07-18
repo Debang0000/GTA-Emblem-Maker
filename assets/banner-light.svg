@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 280" width="840" height="280" role="img" aria-labelledby="title desc">
   <title id="title">GTA Emblem Maker</title>
-  <desc id="desc">A light animated banner showing layered emblem geometry and GPU telemetry.</desc>
+  <desc id="desc">A light animated banner showing layered geometry for complex-image fitting.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#f6fbf8"/>
@@ -32,13 +32,13 @@
     <path d="M-74 41C-20-75 25-68 76 24" stroke="#147d53" stroke-width="2" opacity="0.72"/>
     <circle r="5" fill="#b77b14" stroke="none"><animate attributeName="r" values="4;7;4" dur="2.8s" repeatCount="indefinite"/></circle>
   </g>
-  <text x="58" y="71" fill="#087348" font-family="'Courier New', monospace" font-size="14" letter-spacing="3">NATIVE WINDOWS · CUDA FITTING</text>
+  <text x="58" y="71" fill="#087348" font-family="'Courier New', monospace" font-size="14" letter-spacing="3">QUALITY-FIRST COMPLEX IMAGE FITTING</text>
   <text x="58" y="137" fill="url(#gold)" font-family="'Segoe UI', Arial, sans-serif" font-size="52" font-weight="800" letter-spacing="-2">GTA EMBLEM MAKER</text>
-  <text x="60" y="174" fill="#2e4339" font-family="'Segoe UI', Arial, sans-serif" font-size="19">Raster in. Rockstar-compatible layers out.</text>
+  <text x="60" y="174" fill="#2e4339" font-family="'Segoe UI', Arial, sans-serif" font-size="19">Complex images in. Rockstar-compatible layers out.</text>
   <g font-family="'Courier New', monospace" font-size="12">
     <rect x="58" y="211" width="130" height="30" rx="15" fill="#e0f4e9" stroke="#8ac8a8"/>
     <circle cx="75" cy="226" r="4" fill="#0a9b60"><animate attributeName="opacity" values="0.35;1;0.35" dur="1.8s" repeatCount="indefinite"/></circle>
-    <text x="87" y="230" fill="#08613d">GPU ONLINE</text>
+    <text x="87" y="230" fill="#08613d">DETAIL FIRST</text>
     <rect x="198" y="211" width="152" height="30" rx="15" fill="#fff3cf" stroke="#d5b35f"/>
     <text x="217" y="230" fill="#76500e">PAYLOAD AWARE</text>
   </g>
