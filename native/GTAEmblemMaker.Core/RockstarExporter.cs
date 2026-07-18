@@ -104,9 +104,7 @@ namespace GTAEmblemMaker.Core
         private static string PathLayer(string id, int index, ExportShape shape)
         {
             var values = MatrixValues(shape);
-            var x = shape.UsesIntrinsicAnchor ? shape.X + (shape.Width - shape.Definition.Width) / 2 : shape.X;
-            var y = shape.UsesIntrinsicAnchor ? shape.Y + (shape.Height - shape.Definition.Height) / 2 : shape.Y;
-            return "{\"id\":\"" + id + "\",\"name\":\"" + shape.Definition.Name + "\",\"type\":\"path\",\"y\":" + FormatNumber(y) + ",\"x\":" + FormatNumber(x) + ",\"scaleY\":" + FormatNumber(values.ScaleY * 100) + ",\"scaleX\":" + FormatNumber(values.ScaleX * 100) + ",\"invertedY\":false,\"invertedX\":false,\"rotation\":" + FormatNumber(shape.Rotation) + ",\"opacity\":" + FormatNumber(Math.Max(0, Math.Min(255, shape.Alpha)) / 255.0 * 100) + ",\"index\":" + index.ToString(CultureInfo.InvariantCulture) + ",\"color\":\"" + shape.Color + "\",\"isFilled\":true,\"internal\":false,\"locked\":false,\"tBold\":false,\"tItalic\":false,\"fontFamily\":null,\"borderColor\":\"#a1a1a1\",\"borderSize\":0,\"gradientStyle\":\"Fill\",\"slug\":\"" + shape.Definition.Slug + "\",\"width\":" + DefinitionNumber(shape.Definition.WidthText, shape.Definition.Width, shape.UsesIntrinsicAnchor) + ",\"height\":" + DefinitionNumber(shape.Definition.HeightText, shape.Definition.Height, shape.UsesIntrinsicAnchor) + "}";
+            return "{\"id\":\"" + id + "\",\"name\":\"" + shape.Definition.Name + "\",\"type\":\"path\",\"y\":" + FormatNumber(LayerY(shape)) + ",\"x\":" + FormatNumber(LayerX(shape)) + ",\"scaleY\":" + FormatNumber(values.ScaleY * 100) + ",\"scaleX\":" + FormatNumber(values.ScaleX * 100) + ",\"invertedY\":false,\"invertedX\":false,\"rotation\":" + FormatNumber(LayerRotation(shape)) + ",\"opacity\":" + FormatNumber(LayerOpacity(shape) * 100) + ",\"index\":" + index.ToString(CultureInfo.InvariantCulture) + ",\"color\":\"" + shape.Color + "\",\"isFilled\":true,\"internal\":false,\"locked\":false,\"tBold\":false,\"tItalic\":false,\"fontFamily\":null,\"borderColor\":\"#a1a1a1\",\"borderSize\":0,\"gradientStyle\":\"Fill\",\"slug\":\"" + shape.Definition.Slug + "\",\"width\":" + DefinitionNumber(shape.Definition.WidthText, shape.Definition.Width, shape.UsesIntrinsicAnchor) + ",\"height\":" + DefinitionNumber(shape.Definition.HeightText, shape.Definition.Height, shape.UsesIntrinsicAnchor) + "}";
         }
 
         private static string Matrix(ExportShape shape)
@@ -117,9 +115,9 @@ namespace GTAEmblemMaker.Core
 
         internal static MatrixState MatrixValues(ExportShape shape)
         {
-            var scaleX = shape.Width / shape.Definition.Width;
-            var scaleY = shape.Height / shape.Definition.Height;
-            var radians = shape.Rotation * Math.PI / 180;
+            var scaleX = LayerScale(shape.Width / shape.Definition.Width, shape.UsesIntrinsicAnchor);
+            var scaleY = LayerScale(shape.Height / shape.Definition.Height, shape.UsesIntrinsicAnchor);
+            var radians = LayerRotation(shape) * Math.PI / 180;
             var rawA = Math.Cos(radians) * scaleX;
             var rawB = Math.Sin(radians) * scaleX;
             var rawC = -Math.Sin(radians) * scaleY;
@@ -129,12 +127,40 @@ namespace GTAEmblemMaker.Core
             var c = shape.UsesIntrinsicAnchor ? Round4(rawC) : Round5(rawC);
             var d = shape.UsesIntrinsicAnchor ? Round4(rawD) : Round5(rawD);
             var e = shape.UsesIntrinsicAnchor
-                ? Round4(shape.X + shape.Width / 2 - rawA * shape.Definition.Width / 2 - rawC * shape.Definition.Height / 2)
+                ? Round4(LayerX(shape) + shape.Definition.Width / 2 - rawA * shape.Definition.Width / 2 - rawC * shape.Definition.Height / 2)
                 : Round5(shape.X + shape.Width / 2 - a * shape.Definition.Width / 2 - c * shape.Definition.Height / 2);
             var f = shape.UsesIntrinsicAnchor
-                ? Round4(shape.Y + shape.Height / 2 - rawB * shape.Definition.Width / 2 - rawD * shape.Definition.Height / 2)
+                ? Round4(LayerY(shape) + shape.Definition.Height / 2 - rawB * shape.Definition.Width / 2 - rawD * shape.Definition.Height / 2)
                 : Round5(shape.Y + shape.Height / 2 - b * shape.Definition.Width / 2 - d * shape.Definition.Height / 2);
             return new MatrixState(scaleX, scaleY, a, b, c, d, e, f);
+        }
+
+        private static double LayerX(ExportShape shape)
+        {
+            var value = shape.UsesIntrinsicAnchor ? shape.X + (shape.Width - shape.Definition.Width) / 2 : shape.X;
+            return shape.UsesIntrinsicAnchor ? Math.Floor(value + 0.5) : value;
+        }
+
+        private static double LayerY(ExportShape shape)
+        {
+            var value = shape.UsesIntrinsicAnchor ? shape.Y + (shape.Height - shape.Definition.Height) / 2 : shape.Y;
+            return shape.UsesIntrinsicAnchor ? Math.Floor(value + 0.5) : value;
+        }
+
+        private static double LayerScale(double value, bool clean)
+        {
+            return clean ? Math.Round(value * 100, 2, MidpointRounding.AwayFromZero) / 100 : value;
+        }
+
+        private static double LayerRotation(ExportShape shape)
+        {
+            return shape.UsesIntrinsicAnchor ? Math.Floor(shape.Rotation + 0.5) : shape.Rotation;
+        }
+
+        private static double LayerOpacity(ExportShape shape)
+        {
+            var value = Math.Max(0, Math.Min(255, shape.Alpha)) / 255.0;
+            return shape.UsesIntrinsicAnchor ? Math.Floor(value * 100 + 0.5) / 100 : value;
         }
 
         private static double Round4(double value)
@@ -263,8 +289,9 @@ namespace GTAEmblemMaker.Core
             {
                 if (state == null) throw new ArgumentException("State entries cannot be null.", "state");
                 var shape = Shapes.ToExportShape(state, exportMinAxis);
+                var opacity = LayerOpacity(shape);
                 paths.Append("<path fill=\"").Append(shape.Color).Append('\"');
-                if (shape.Alpha < 255) paths.Append(" fill-opacity=\"").Append(FormatNumber(shape.Alpha / 255.0)).Append('\"');
+                if (opacity < 1) paths.Append(" fill-opacity=\"").Append(FormatNumber(opacity)).Append('\"');
                 paths.Append(" d=\"").Append(shape.Definition.Path).Append("\" transform=\"").Append(Matrix(shape)).Append("\"></path>");
                 layers.Append(',').Append(PathLayer(LayerId(), count, shape));
                 count++;
