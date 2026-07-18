@@ -11,4 +11,7 @@
   <ItemGroup Condition="'$(BundlePayload)' != ''">
     <EmbeddedResource Include="$(BundlePayload)" LogicalName="GTAEmblemMaker.Payload.zip" />
   </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
 </Project>

@@ -103,5 +103,35 @@ $zip = "$out.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -CompressionLevel Optimal
 
+$bundleProject = Join-Path $root "native\GTAEmblemMaker.Bundle\GTAEmblemMaker.Bundle.csproj"
+$bundleBuild = [IO.Path]::GetFullPath((Join-Path $root "release\.bundle-v1.1.2"))
+$singleExe = [IO.Path]::GetFullPath("$out.exe")
+foreach ($bundlePath in @($bundleBuild, $singleExe)) {
+  if (-not $bundlePath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Bundle output must stay inside the repository: $bundlePath"
+  }
+}
+if (Test-Path -LiteralPath $bundleBuild) { Remove-Item -LiteralPath $bundleBuild -Recurse -Force }
+if (Test-Path -LiteralPath $singleExe) { Remove-Item -LiteralPath $singleExe -Force }
+try {
+  dotnet build $bundleProject -c Release "-p:BundlePayload=$zip" "-p:OutputPath=$bundleBuild\"
+  if ($LASTEXITCODE -ne 0) { throw "Single-file launcher build failed." }
+  $builtBundle = Join-Path $bundleBuild "GTAEmblemMaker-v1.1.2.exe"
+  Copy-Item -LiteralPath $builtBundle -Destination $singleExe -Force
+  $prepareProcess = Start-Process -FilePath $singleExe -ArgumentList "--prepare-only" -WindowStyle Hidden -Wait -PassThru
+  if ($prepareProcess.ExitCode -ne 0) { throw "Single-file launcher preparation check failed." }
+} finally {
+  if (Test-Path -LiteralPath $bundleBuild) { Remove-Item -LiteralPath $bundleBuild -Recurse -Force }
+}
+
+if (-not (Test-Path -LiteralPath $zip)) { throw "Portable ZIP was not created." }
+if (-not (Test-Path -LiteralPath $singleExe)) { throw "Single-file launcher was not created." }
+if ((Get-Item -LiteralPath $singleExe).Length -le (Get-Item -LiteralPath $zip).Length) {
+  throw "Single-file launcher does not contain the portable payload."
+}
+
 Write-Host ("Package written to {0} ({1:N2} MB)" -f $out, ($bytes / 1MB))
 Write-Host ("Release archive written to {0}" -f $zip)
+Write-Host ("Single-file launcher written to {0}" -f $singleExe)
+Write-Host ("ZIP SHA-256: {0}" -f (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash)
+Write-Host ("EXE SHA-256: {0}" -f (Get-FileHash -LiteralPath $singleExe -Algorithm SHA256).Hash)

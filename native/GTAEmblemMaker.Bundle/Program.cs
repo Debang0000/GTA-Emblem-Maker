@@ -20,8 +20,7 @@ namespace GTAEmblemMaker.Bundle
                 }
 
                 var assembly = Assembly.GetExecutingAssembly();
-                var assemblyVersion = assembly.GetName().Version;
-                var version = assemblyVersion.Major + "." + assemblyVersion.Minor + "." + assemblyVersion.Build;
+                var version = BundleLauncher.VersionLabel(assembly.GetName().Version);
                 string folder;
                 using (var payload = assembly.GetManifestResourceStream(PayloadResource))
                 {

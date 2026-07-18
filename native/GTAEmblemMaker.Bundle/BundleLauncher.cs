@@ -10,6 +10,12 @@ namespace GTAEmblemMaker.Bundle
     {
         private const string MarkerName = ".payload-sha256";
 
+        internal static string VersionLabel(Version version)
+        {
+            if (version == null) throw new ArgumentNullException("version");
+            return "v" + version.Major + "." + version.Minor + "." + version.Build;
+        }
+
         internal static string PreparePayload(Stream payload, string localAppData, string version)
         {
             if (payload == null) throw new ArgumentNullException("payload");
