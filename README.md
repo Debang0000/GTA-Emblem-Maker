@@ -9,7 +9,7 @@ An unofficial native Windows application that converts an image into a Rockstar-
 | **Best Quality** | Beam search followed by local exact pair refinement. Recommended for final output. |
 | **Beam Clean** | Beam search only. Faster and useful when pair refinement changes little. |
 | **Perceptual** | Greedy search with LPIPS AlexNet 224 reranking. Provides a different visual tradeoff. |
-| **Official Catalog Quality** | The recovered mixed-primitive schedule plus nine official Rockstar curves and two official round shapes, scored on CUDA and reranked with AlexNet 224. |
+| **Official Catalog Quality** | The recovered mixed-primitive schedule plus nine official Rockstar curves and two official round shapes, scored on CUDA and reranked with native edge detail. |
 
 `Generate all` runs the shared Beam stage once, then overlaps CPU pair refinement with the GPU Perceptual pipeline. Completed results can be compared in the application before copying the import code.
 
@@ -27,7 +27,7 @@ Version 1.1 adds exact official curve and round-shape export, including independ
 
 ## Usage
 
-Download `GTAEmblemMaker-v1.1.0.zip` from GitHub Releases, extract it, and run `GTAEmblemMaker.exe`. Select an image and pipeline, generate the emblem, then use **Copy Code** for the Rockstar import payload.
+Download `GTAEmblemMaker-v1.1.1.zip` from GitHub Releases, extract it, and run `GTAEmblemMaker.exe`. Select an image and pipeline, generate the emblem, then use **Copy Code** for the Rockstar import payload.
 
 Runtime requirements: Windows x64, .NET Framework 4.8, and an NVIDIA CUDA-capable GPU.
 
@@ -39,4 +39,4 @@ Source builds also require the CUDA Toolkit and MSVC toolchain.
 .\scripts\package-windows.ps1
 ```
 
-The portable package is written to `release\GTAEmblemMaker-v1.1.0.zip`.
+The portable package is written to `release\GTAEmblemMaker-v1.1.1.zip`.
