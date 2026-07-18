@@ -311,7 +311,7 @@ namespace GTAEmblemMaker.Core
             EnsureFields(value, "perceptualRerank", "backend", "model", "batchSize", "shapeBalanced", "topK", "eachTopK", "firstRerankLayer", "tileSize", "tileStride", "maxTilesPerCandidate", "perceptualRankWeight", "middleEvery", "finalEvery", "batchFiles");
             var backend = RequiredString(value, "backend", "perceptualRerank");
             var model = RequiredString(value, "model", "perceptualRerank");
-            if (backend != "lpips-directml") throw new ProfileValidationException("Unsupported perceptual rerank backend.");
+            if (backend != "lpips-directml" && backend != "native-edge-detail") throw new ProfileValidationException("Unsupported perceptual rerank backend.");
             if (!String.Equals(Path.GetFileName(model), model, StringComparison.Ordinal) || model.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new ProfileValidationException("Invalid perceptual model ID.");
             var topK = RequiredInt(value, "topK", "perceptualRerank");
             var batchSize = RequiredInt(value, "batchSize", "perceptualRerank");

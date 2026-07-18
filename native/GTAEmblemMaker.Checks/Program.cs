@@ -34,14 +34,19 @@ namespace GTAEmblemMaker.Checks
                 File.WriteAllBytes(args[2], SourceImage.Load(args[1]).CanonicalRgba);
                 return;
             }
+            if (args.Length == 3 && args[0] == "--catalog-final-parity")
+            {
+                RunCatalogFinalParity(args[1], args[2]);
+                return;
+            }
             if (args.Length == 4 && args[0] == "--catalog-prefix-check")
             {
                 CatalogCompatibilityChecks.Run(args[1], args[2], args[3]);
                 return;
             }
-            if (args.Length == 5 && args[0] == "--catalog-checkpoint-check")
+            if ((args.Length == 5 || args.Length == 7) && args[0] == "--catalog-checkpoint-check")
             {
-                CatalogCompatibilityChecks.RunCatalogCheckpoint(args[1], args[2], args[3], args[4]);
+                CatalogCompatibilityChecks.RunCatalogCheckpoint(args[1], args[2], args[3], args[4], args.Length == 7 ? Int32.Parse(args[5]) : 501, args.Length == 7 ? args[6] : null);
                 return;
             }
             if (args.Length == 2 && args[0] == "--perceptual-check")
@@ -54,12 +59,17 @@ namespace GTAEmblemMaker.Checks
                 PerceptualChecks.MeasureBatch(ProfileCatalog.Load(args[1]).Default);
                 return;
             }
-            if (args.Length > 0)
+            if (args.Length >= 4 && args.Length <= 7 && args[0] == "--formal-fit-canonical")
             {
-                RunFormalFit(args);
+                RunFormalFit(args, true);
                 return;
             }
-            Check.Equal("1.1.0", EngineInfo.Version, "engine version");
+            if (args.Length > 0)
+            {
+                RunFormalFit(args, false);
+                return;
+            }
+            Check.Equal("1.1.1", EngineInfo.Version, "engine version");
 
             var catalog = ProfileCatalog.Load(ProfileFolder());
             Check.Equal(4, catalog.Profiles.Count, "production profile count");
@@ -113,7 +123,8 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(11, catalogProfile.Stages[0].CatalogSearch.Identities.Count, "official catalog identity count");
             Check.Equal(501, catalogProfile.Stages[0].CatalogSearch.FromLayer, "official catalog first layer");
             Check.Equal(512, catalogProfile.Stages[0].CatalogSearch.CandidatesPerGroup, "official catalog candidate quota");
-            Check.Equal(1001, catalogProfile.Stages[0].PerceptualRerank.FirstRerankLayer, "official catalog AlexNet boundary");
+            Check.Equal(1001, catalogProfile.Stages[0].PerceptualRerank.FirstRerankLayer, "official catalog perceptual boundary");
+            PerceptualChecks.CheckNativeEdgeBackend(catalogProfile);
             CatalogSearchChecks.CheckPerceptualPool(catalogProfile);
             FittingEngineChecks.Run(perceptualProfile, beamCleanProfile, bestQualityProfile);
         }
@@ -125,28 +136,35 @@ namespace GTAEmblemMaker.Checks
             return result.ToString();
         }
 
-        private static void RunFormalFit(string[] args)
+        private static void RunFormalFit(string[] args, bool canonical)
         {
-            if (args.Length < 3 || args.Length > 6 || args[0] != "--formal-fit") throw new ArgumentException("Usage: --formal-fit <image> <output-root> [layer-limit] [profile-folder] [profile-id]");
-            var catalog = ProfileCatalog.Load(args.Length >= 5 ? args[4] : ProfileFolder());
+            var minimum = canonical ? 4 : 3;
+            var maximum = canonical ? 7 : 6;
+            var command = canonical ? "--formal-fit-canonical" : "--formal-fit";
+            if (args.Length < minimum || args.Length > maximum || args[0] != command) throw new ArgumentException("Usage: " + command + " <image-or-rgba> <output-root> " + (canonical ? "<timestamp> " : "") + "[layer-limit] [profile-folder] [profile-id]");
+            var layerIndex = canonical ? 4 : 3;
+            var profileFolderIndex = canonical ? 5 : 4;
+            var profileIdIndex = canonical ? 6 : 5;
+            var catalog = ProfileCatalog.Load(args.Length > profileFolderIndex ? args[profileFolderIndex] : ProfileFolder());
             var profile = catalog.Default;
-            if (args.Length == 6)
+            if (args.Length > profileIdIndex)
             {
                 profile = null;
                 for (var index = 0; index < catalog.Profiles.Count; index++)
                 {
-                    if (catalog.Profiles[index].Id == args[5]) profile = catalog.Profiles[index];
+                    if (catalog.Profiles[index].Id == args[profileIdIndex]) profile = catalog.Profiles[index];
                 }
-                if (profile == null) throw new ArgumentException("Unknown profile ID: " + args[5], "args");
+                if (profile == null) throw new ArgumentException("Unknown profile ID: " + args[profileIdIndex], "args");
             }
-            var source = SourceImage.Load(args[1]);
+            var source = canonical ? SourceImage.FromCanonical(File.ReadAllBytes(args[1])) : SourceImage.Load(args[1]);
             var root = ProjectRoot();
             var request = new FitRequest(
                 profile,
                 source,
                 Path.Combine(root, "third_party", "cuda-scorer", "bin", "cuda-scorer.exe"),
                 Path.Combine(root, "third_party", "lpips-winml", "model"));
-            if (args.Length >= 4) request.LayerLimit = Int32.Parse(args[3]);
+            if (canonical) request.Timestamp = Int64.Parse(args[3]);
+            if (args.Length > layerIndex) request.LayerLimit = Int32.Parse(args[layerIndex]);
             var progress = new DirectProgress<FitProgress>(value =>
             {
                 if (value.Layer == 1 || value.Layer % 25 == 0) Console.WriteLine(value.Layer + "/" + value.MaximumLayers + " code=" + value.GeneratedCodeLength + " energy=" + value.Energy.ToString("0.000000"));
@@ -298,16 +316,17 @@ namespace GTAEmblemMaker.Checks
 
         private static string DecodeSvg(string consoleCode)
         {
-            return DecodeCompressedPayload(consoleCode)[0];
+            return DecodePayload(consoleCode)[0];
         }
 
         private static string DecodeLayerJson(string consoleCode)
         {
-            return DecodeCompressedPayload(consoleCode)[1];
+            return DecodePayload(consoleCode)[1];
         }
 
-        private static string[] DecodeCompressedPayload(string consoleCode)
+        private static string[] DecodePayload(string consoleCode)
         {
+            if (!consoleCode.Contains("DecompressionStream(\"gzip\")")) return DecodeManualPayload(consoleCode);
             const string prefix = "atob(\"";
             var start = consoleCode.IndexOf(prefix, StringComparison.Ordinal) + prefix.Length;
             var end = consoleCode.IndexOf("\")", start, StringComparison.Ordinal);
@@ -319,6 +338,29 @@ namespace GTAEmblemMaker.Checks
                 gzip.CopyTo(output);
                 return Encoding.UTF8.GetString(output.ToArray()).Split(new[] { '\0' }, 2);
             }
+        }
+
+        private static string[] DecodeManualPayload(string consoleCode)
+        {
+            const string svgPrefix = "var svgData = \"";
+            const string layerPrefix = "var layerData = \"";
+            var svgBase64 = ExtractQuoted(consoleCode, svgPrefix);
+            var layerBase64 = ExtractQuoted(consoleCode, layerPrefix);
+            return new[]
+            {
+                Encoding.UTF8.GetString(Convert.FromBase64String(svgBase64)),
+                Encoding.UTF8.GetString(Convert.FromBase64String(layerBase64))
+            };
+        }
+
+        private static string ExtractQuoted(string value, string prefix)
+        {
+            var start = value.IndexOf(prefix, StringComparison.Ordinal);
+            if (start < 0) throw new InvalidOperationException("Missing payload section: " + prefix);
+            start += prefix.Length;
+            var end = value.IndexOf("\";", start, StringComparison.Ordinal);
+            if (end < 0) throw new InvalidOperationException("Missing payload terminator: " + prefix);
+            return value.Substring(start, end - start);
         }
 
         internal static Dictionary<string, object>[] DecodeLayers(string consoleCode)
@@ -338,9 +380,86 @@ namespace GTAEmblemMaker.Checks
             return layers;
         }
 
+        private static void RunCatalogFinalParity(string selectedCandidatesPath, string acceptedFolder)
+        {
+            var states = CatalogCompatibilityChecks.LoadAcceptedStates(selectedCandidatesPath);
+            var replayCandidates = CatalogCompatibilityChecks.LoadAcceptedReplayCandidates(selectedCandidatesPath);
+            Check.Equal(1345, states.Count, "catalog compatibility accepted layer count");
+            var importPath = Path.Combine(acceptedFolder, "manual-import-snippet.js");
+            if (!File.Exists(importPath)) importPath = Path.Combine(acceptedFolder, "final-generated-code.txt");
+            var svgPath = Path.Combine(acceptedFolder, "payload.svg");
+            var previewPath = Path.Combine(acceptedFolder, "payload-preview.rgba");
+            var expectedImport = File.ReadAllText(importPath);
+            var expectedLayers = DecodeLayers(expectedImport);
+            var expectedIds = ExtractLayerIds(expectedLayers);
+            var timestampText = LayerValue(expectedLayers[1], "id");
+            var timestamp = Int64.Parse(timestampText.Substring(1, timestampText.Length - 2));
+            var expectedSvg = File.ReadAllText(svgPath);
+            var expectedPreview = File.ReadAllBytes(previewPath);
+            var payload = RockstarExporter.Build(states, true, 255, 255, 255, timestamp, true, 2, expectedIds);
+            var actualPreview = RenderHistoricalCatalogPreviewAlias(replayCandidates, payload);
+            var actualLayerJson = DecodeLayerJson(payload.ConsoleCode);
+            var expectedLayerJson = DecodeLayerJson(expectedImport);
+            var actualLayers = DecodeLayers(payload.ConsoleCode);
+            var layerFieldDifference = DescribeLayerFieldDifference(expectedLayers, actualLayers);
+
+            Check.Equal("#transparent", payload.BackgroundColor, "catalog compatibility transparency");
+            Check.Equal(payload.ConsoleCode.Length, payload.GeneratedCodeLength, "catalog compatibility import length");
+            if (payload.GeneratedCodeLength != 1249106) throw new InvalidOperationException("catalog compatibility generated length: expected 1249106, got " + payload.GeneratedCodeLength + " | expected import " + expectedImport.Length + " actual import " + payload.ConsoleCode.Length + " | expected layers " + expectedLayerJson.Length + " actual layers " + actualLayerJson.Length + " | svg " + DescribeDifference(expectedSvg, payload.Svg) + " | layers " + DescribeDifference(expectedLayerJson, actualLayerJson) + " | layer fields " + layerFieldDifference);
+            Check.Equal(expectedImport, payload.ConsoleCode, "catalog compatibility import parity");
+            Check.Equal(expectedSvg, payload.Svg, "catalog compatibility SVG parity");
+            Check.Equal(expectedLayerJson, actualLayerJson, "catalog compatibility layer JSON parity");
+            Check.SequenceEqual(expectedPreview, actualPreview, "catalog compatibility payload render parity");
+
+            var layer22 = new ShapeState[22];
+            for (var index = 0; index < layer22.Length; index++) layer22[index] = states[index];
+            var layer22Payload = RockstarExporter.Build(layer22, true, 255, 255, 255, timestamp, true, 2, expectedIds);
+            Check.Equal(21898, layer22Payload.GeneratedCodeLength, "catalog compatibility layer 22 serialized length");
+
+            Console.WriteLine("layers=" + states.Count);
+            Console.WriteLine("generatedCodeLength=" + payload.GeneratedCodeLength);
+            Console.WriteLine("importSha256=" + HashText(payload.ConsoleCode));
+            Console.WriteLine("svgSha256=" + HashText(payload.Svg));
+            Console.WriteLine("payloadPreviewSha256=" + HashBytes(actualPreview));
+            Console.WriteLine("layer22GeneratedCodeLength=" + layer22Payload.GeneratedCodeLength);
+        }
+
+        private static byte[] RenderHistoricalCatalogPreviewAlias(IReadOnlyList<FitCandidate> candidates, RockstarPayload payload)
+        {
+            var rgba = new byte[512 * 512 * 4];
+            if (payload.BackgroundColor != "#transparent")
+            {
+                var red = Convert.ToByte(payload.BackgroundColor.Substring(1, 2), 16);
+                var green = Convert.ToByte(payload.BackgroundColor.Substring(3, 2), 16);
+                var blue = Convert.ToByte(payload.BackgroundColor.Substring(5, 2), 16);
+                for (var offset = 0; offset < rgba.Length; offset += 4)
+                {
+                    rgba[offset] = red;
+                    rgba[offset + 1] = green;
+                    rgba[offset + 2] = blue;
+                    rgba[offset + 3] = 255;
+                }
+            }
+            for (var index = 0; index < candidates.Count; index++)
+            {
+                var candidate = candidates[index];
+                if (candidate.Shape == "ellipse" || candidate.Shape == "circle" || candidate.Shape == "round")
+                    candidate = new FitCandidate(candidate.CandidateId, candidate.Group, candidate.Kind, candidate.Shape, candidate.PoolShapeFamily, candidate.Cx, candidate.Cy, candidate.Rx, candidate.Ry, candidate.Red, candidate.Green, candidate.Blue, candidate.Alpha, 0, candidate.Energy, candidate.OldErrorDelta, candidate.NewErrorDelta);
+                FitMath.ApplyCompatibilityCandidate(rgba, 512, candidate);
+            }
+            return rgba;
+        }
+
         private static string LayerValue(Dictionary<string, object> layer, string name)
         {
             return (string)layer[name];
+        }
+
+        private static string[] ExtractLayerIds(Dictionary<string, object>[] layers)
+        {
+            var ids = new string[Math.Max(0, layers.Length - 1)];
+            for (var index = 1; index < layers.Length; index++) ids[index - 1] = LayerValue(layers[index], "id");
+            return ids;
         }
 
         private static double LayerNumber(Dictionary<string, object> layer, string name)
@@ -470,6 +589,52 @@ namespace GTAEmblemMaker.Checks
             return Directory.GetParent(ProfileFolder()).FullName;
         }
 
+        private static string HashText(string value)
+        {
+            return HashBytes(Encoding.UTF8.GetBytes(value));
+        }
+
+        private static string HashBytes(byte[] bytes)
+        {
+            using (var sha256 = SHA256.Create()) return ToHex(sha256.ComputeHash(bytes));
+        }
+
+        private static string DescribeDifference(string expected, string actual)
+        {
+            var length = Math.Min(expected.Length, actual.Length);
+            for (var index = 0; index < length; index++)
+            {
+                if (expected[index] != actual[index]) return "first diff @" + index + " expected `" + Snippet(expected, index) + "` actual `" + Snippet(actual, index) + "`";
+            }
+            if (expected.Length != actual.Length) return "same prefix, length expected " + expected.Length + " actual " + actual.Length;
+            return "identical";
+        }
+
+        private static string DescribeLayerFieldDifference(Dictionary<string, object>[] expected, Dictionary<string, object>[] actual)
+        {
+            if (expected.Length != actual.Length) return "layer count expected " + expected.Length + " actual " + actual.Length;
+            for (var index = 0; index < expected.Length; index++)
+            {
+                foreach (var pair in expected[index])
+                {
+                    if (pair.Key == "id") continue;
+                    object actualValue;
+                    if (!actual[index].TryGetValue(pair.Key, out actualValue)) return "layer " + index + " missing field " + pair.Key;
+                    var expectedText = Convert.ToString(pair.Value, System.Globalization.CultureInfo.InvariantCulture);
+                    var actualText = Convert.ToString(actualValue, System.Globalization.CultureInfo.InvariantCulture);
+                    if (!String.Equals(expectedText, actualText, StringComparison.Ordinal)) return "layer " + index + " field " + pair.Key + " expected `" + expectedText + "` actual `" + actualText + "`";
+                }
+            }
+            return "only id differs";
+        }
+
+        private static string Snippet(string value, int index)
+        {
+            var start = Math.Max(0, index - 32);
+            var end = Math.Min(value.Length, index + 32);
+            return value.Substring(start, end - start).Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
         private sealed class DirectProgress<T> : IProgress<T>
         {
             private readonly Action<T> report;
@@ -531,7 +696,7 @@ namespace GTAEmblemMaker.Checks
             {
                 if (expected[index] != actual[index])
                 {
-                    throw new InvalidOperationException(name + ": differs at " + index);
+                    throw new InvalidOperationException(name + ": differs at " + index + ", expected " + expected[index] + ", actual " + actual[index]);
                 }
             }
         }

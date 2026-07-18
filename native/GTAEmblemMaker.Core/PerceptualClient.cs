@@ -62,9 +62,10 @@ namespace GTAEmblemMaker.Core
 
         internal static PerceptualClient Start(string modelFolder, PerceptualRerank config, CancellationToken cancellationToken)
         {
-            if (String.IsNullOrWhiteSpace(modelFolder) || !Directory.Exists(modelFolder)) throw new DirectoryNotFoundException("Perceptual model folder was not found.");
             if (config == null) throw new ArgumentNullException("config");
             cancellationToken.ThrowIfCancellationRequested();
+            if (config.Backend == "native-edge-detail") return new PerceptualClient(null, config.Backend, config.Model, config.TileSize, config.BatchSize);
+            if (String.IsNullOrWhiteSpace(modelFolder) || !Directory.Exists(modelFolder)) throw new DirectoryNotFoundException("Perceptual model folder was not found.");
             var modelPath = Path.Combine(modelFolder, config.Model + ".onnx");
             if (!File.Exists(modelPath)) throw new FileNotFoundException("Perceptual model was not found.", modelPath);
             using (var options = new SessionOptions())
@@ -96,6 +97,15 @@ namespace GTAEmblemMaker.Core
             {
                 if (Volatile.Read(ref disposed) != 0) throw new ObjectDisposedException("PerceptualClient");
                 var scores = new List<PerceptualScore>(items.Count);
+                if (session == null)
+                {
+                    for (var index = 0; index < items.Count; index++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        scores.Add(new PerceptualScore(items[index].CandidateId, items[index].TargetKey, EdgeDetailScore(candidates[index], targets[index], width, height)));
+                    }
+                    return new ReadOnlyCollection<PerceptualScore>(scores);
+                }
                 var valuesPerImage = checked(3 * ModelSize * ModelSize);
                 for (var start = 0; start < items.Count; start += batchSize)
                 {
@@ -145,8 +155,53 @@ namespace GTAEmblemMaker.Core
         public void Dispose()
         {
             if (Interlocked.Exchange(ref disposed, 1) != 0) return;
-            session.Dispose();
+            if (session != null) session.Dispose();
             access.Dispose();
+        }
+
+        private static double EdgeDetailScore(byte[] candidate, byte[] target, int width, int height)
+        {
+            if (width < 3 || height < 3) return ColorMse(candidate, target);
+            var colorError = 0.0;
+            var edgeError = 0.0;
+            for (var y = 1; y < height - 1; y++)
+                for (var x = 1; x < width - 1; x++)
+                {
+                    var offset = (y * width + x) * 4;
+                    for (var channel = 0; channel < 3; channel++)
+                    {
+                        var delta = (double)candidate[offset + channel] - target[offset + channel];
+                        colorError += delta * delta;
+                    }
+                    var gradientDelta = LuminanceGradient(candidate, width, x, y) - LuminanceGradient(target, width, x, y);
+                    edgeError += gradientDelta * gradientDelta;
+                }
+            var pixels = (double)((width - 2) * (height - 2));
+            return colorError / (pixels * 3 * 255 * 255) + 0.35 * edgeError / (pixels * 255 * 255);
+        }
+
+        private static double ColorMse(byte[] candidate, byte[] target)
+        {
+            var total = 0.0;
+            for (var offset = 0; offset + 2 < candidate.Length && offset + 2 < target.Length; offset += 4)
+                for (var channel = 0; channel < 3; channel++)
+                {
+                    var delta = (double)candidate[offset + channel] - target[offset + channel];
+                    total += delta * delta;
+                }
+            return total / ((candidate.Length / 4.0) * 3 * 255 * 255);
+        }
+
+        private static double LuminanceGradient(byte[] pixels, int width, int x, int y)
+        {
+            return Math.Abs(Luminance(pixels, width, x + 1, y) - Luminance(pixels, width, x - 1, y))
+                + Math.Abs(Luminance(pixels, width, x, y + 1) - Luminance(pixels, width, x, y - 1));
+        }
+
+        private static double Luminance(byte[] pixels, int width, int x, int y)
+        {
+            var offset = (y * width + x) * 4;
+            return 0.2126 * pixels[offset] + 0.7152 * pixels[offset + 1] + 0.0722 * pixels[offset + 2];
         }
 
         private void AppendTensor(byte[] rgba, int width, int height, int batchIndex, float[] tensor)
@@ -224,7 +279,7 @@ namespace GTAEmblemMaker.Core
             return layer % Math.Max(1, every) == 0;
         }
 
-        internal static async Task<PerceptualSelection> SelectAsync(PerceptualClient client, PerceptualRerank config, byte[] target, byte[] current, IReadOnlyList<CudaChainResult> chains, FitCandidate mseBest, CancellationToken cancellationToken, IReadOnlyList<FitCandidate> extraCandidates = null)
+        internal static async Task<PerceptualSelection> SelectAsync(PerceptualClient client, PerceptualRerank config, byte[] target, byte[] current, IReadOnlyList<CudaChainResult> chains, FitCandidate mseBest, CancellationToken cancellationToken, IReadOnlyList<FitCandidate> extraCandidates = null, bool compatibilityGeometry = false)
         {
             if (client == null) throw new ArgumentNullException("client");
             if (config == null) throw new ArgumentNullException("config");
@@ -247,7 +302,9 @@ namespace GTAEmblemMaker.Core
             for (var index = 0; index < candidates.Count; index++)
             {
                 var candidate = candidates[index];
-                var lines = FitMath.Rasterize(candidate, CanvasSize, CanvasSize);
+                var lines = compatibilityGeometry
+                    ? FitMath.RasterizeCompatibilityCandidate(candidate, CanvasSize, CanvasSize)
+                    : FitMath.Rasterize(candidate, CanvasSize, CanvasSize);
                 var tiles = TilesForCandidate(lines, config);
                 var candidateKey = CandidateKey(candidate);
                 for (var tileIndex = 0; tileIndex < tiles.Count; tileIndex++)
@@ -284,7 +341,19 @@ namespace GTAEmblemMaker.Core
                 .ThenBy(candidate => candidate.Energy)
                 .ThenBy(candidate => candidate.CandidateId)
                 .First();
-            return new PerceptualSelection(selected, CandidateKey(selected) != CandidateKey(mseBest), MeanScore(totals, selected));
+            var changedSelection = CandidateKey(selected) != CandidateKey(mseBest);
+            var score = MeanScore(totals, selected);
+            return new PerceptualSelection(MapAcceptedPoolFamily(selected, mseBest), changedSelection, score);
+        }
+
+        internal static FitCandidate MapAcceptedPoolFamily(FitCandidate selected, FitCandidate mseBest)
+        {
+            if (selected == null) throw new ArgumentNullException("selected");
+            if (mseBest == null) throw new ArgumentNullException("mseBest");
+            if (selected.Kind != CandidateShapeKind.OfficialCatalog) return selected;
+            return new FitCandidate(selected.CandidateId, selected.Group, selected.Kind, selected.Shape, mseBest.PoolShapeFamily,
+                selected.Cx, selected.Cy, selected.Rx, selected.Ry, selected.Red, selected.Green, selected.Blue, selected.Alpha,
+                selected.AngleDegrees, selected.Energy, selected.OldErrorDelta, selected.NewErrorDelta);
         }
 
         internal static List<FitCandidate> SelectCandidates(List<FitCandidate> all, PerceptualRerank config)

@@ -353,6 +353,29 @@ namespace GTAEmblemMaker.Core
             return result;
         }
 
+        internal async Task<CudaCatalogSelectionResult> SelectResidentCatalogAsync(int identityCount, int candidatesPerGroup, int layer, int minAxis, uint seed, bool weighted, CancellationToken cancellationToken)
+        {
+            var request = CudaProtocol.CreateResidentCatalogSelectionRequest(identityCount, candidatesPerGroup, layer, minAxis, seed, weighted);
+            var result = await ExchangeAsync(async token =>
+            {
+                await WriteAsync(request, token).ConfigureAwait(false);
+                var prefix = await ReadExactAsync(CudaProtocol.CatalogSelectionResponsePrefixSize, token).ConfigureAwait(false);
+                var finalistCount = CudaProtocol.ReadCatalogSelectionFinalistCount(prefix);
+                var tail = await ReadExactAsync(checked(finalistCount * CudaProtocol.CatalogSelectionChainSize), token).ConfigureAwait(false);
+                return CudaProtocol.ParseCatalogSelectionResponse(prefix, tail);
+            }, cancellationToken).ConfigureAwait(false);
+            var candidates = checked((long)result.InitialCandidateCount + result.ProposalScores);
+            Interlocked.Increment(ref residentCatalogScoreCommandCount);
+            Interlocked.Add(ref residentCatalogCandidatesEvaluated, candidates);
+            Interlocked.Add(ref residentCatalogGpuKernelCount, result.KernelCount);
+            Interlocked.Increment(ref residentCatalogSynchronizationCount);
+            Interlocked.Increment(ref gpuExchangeCount);
+            Interlocked.Increment(ref gpuCommandCount);
+            Interlocked.Add(ref candidatesEvaluated, candidates);
+            Interlocked.Increment(ref hostDeviceSynchronizationCount);
+            return result;
+        }
+
         private void RecordTransfer(long bytes, long synchronizations)
         {
             Interlocked.Add(ref hostToDeviceBytes, bytes);

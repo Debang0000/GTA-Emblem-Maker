@@ -87,6 +87,26 @@ namespace GTAEmblemMaker.Core
         public IReadOnlyList<CudaScore> Scores { get; internal set; }
     }
 
+    internal sealed class CudaCatalogChainResult
+    {
+        internal int AtlasIndex { get; set; }
+        internal uint GroupId { get; set; }
+        internal CudaCatalogCandidate Candidate { get; set; }
+        internal CudaScore Score { get; set; }
+    }
+
+    internal sealed class CudaCatalogSelectionResult
+    {
+        internal uint InitialCandidateCount { get; set; }
+        internal uint ProposalScores { get; set; }
+        internal uint AcceptedMutations { get; set; }
+        internal uint Rounds { get; set; }
+        internal uint EarlyStopIdentityCount { get; set; }
+        internal uint KernelCount { get; set; }
+        internal double ServerMilliseconds { get; set; }
+        internal IReadOnlyList<CudaCatalogChainResult> Chains { get; set; }
+    }
+
     internal sealed class CudaCatalogBatch
     {
         internal int AtlasIndex { get; private set; }
@@ -154,6 +174,8 @@ namespace GTAEmblemMaker.Core
         public const int MixedResponsePrefixSize = 196;
         public const int MixedChainSize = 68;
         public const int CatalogResponsePrefixSize = 40;
+        internal const int CatalogSelectionResponsePrefixSize = 44;
+        internal const int CatalogSelectionChainSize = 68;
 
         public static byte[] CreateInitRequest(int width, int height, ulong baseTotalError, byte[] target, byte[] current)
         {
@@ -265,6 +287,24 @@ namespace GTAEmblemMaker.Core
                 for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
                     for (var candidateIndex = 0; candidateIndex < batches[batchIndex].Candidates.Count; candidateIndex++)
                         WriteCatalogCandidate(writer, batches[batchIndex].Candidates[candidateIndex]);
+            });
+        }
+
+        internal static byte[] CreateResidentCatalogSelectionRequest(int identityCount, int candidatesPerGroup, int layer, int minAxis, uint seed, bool weighted)
+        {
+            if (identityCount < 1 || identityCount > MaxCatalogAtlasCount) throw new ArgumentOutOfRangeException("identityCount");
+            if (candidatesPerGroup < 1 || candidatesPerGroup > MaxCandidatesPerGroup) throw new ArgumentOutOfRangeException("candidatesPerGroup");
+            if (layer < 1 || layer > MaxLayer) throw new ArgumentOutOfRangeException("layer");
+            if (minAxis < 1 || minAxis > MaxMinAxis) throw new ArgumentOutOfRangeException("minAxis");
+            return WriteRequest(writer =>
+            {
+                writer.Write(27u);
+                writer.Write(weighted ? 1u : 0u);
+                writer.Write((uint)identityCount);
+                writer.Write((uint)candidatesPerGroup);
+                writer.Write((uint)layer);
+                writer.Write((uint)minAxis);
+                writer.Write(seed);
             });
         }
 
@@ -406,6 +446,57 @@ namespace GTAEmblemMaker.Core
             return new CudaCatalogScoreResult { Scores = new ReadOnlyCollection<CudaScore>(scores) };
         }
 
+        internal static int ReadCatalogSelectionFinalistCount(byte[] prefix)
+        {
+            RequireLength(prefix, CatalogSelectionResponsePrefixSize, "prefix");
+            using (var reader = Reader(prefix))
+            {
+                RequireSuccess("SELECT_RESIDENT_CATALOG", reader.ReadUInt32());
+                var identityCount = reader.ReadUInt32();
+                var finalistCount = reader.ReadUInt32();
+                if (identityCount == 0 || identityCount > MaxCatalogAtlasCount || finalistCount != identityCount * 16u) throw new InvalidDataException("Catalog selection response count is invalid.");
+                return checked((int)finalistCount);
+            }
+        }
+
+        internal static CudaCatalogSelectionResult ParseCatalogSelectionResponse(byte[] prefix, byte[] tail)
+        {
+            var finalistCount = ReadCatalogSelectionFinalistCount(prefix);
+            if (tail == null) throw new ArgumentNullException("tail");
+            if (tail.Length != checked(finalistCount * CatalogSelectionChainSize)) throw new InvalidDataException("Catalog selection response tail length is invalid.");
+            uint identityCount;
+            var result = new CudaCatalogSelectionResult();
+            using (var reader = Reader(prefix))
+            {
+                RequireSuccess("SELECT_RESIDENT_CATALOG", reader.ReadUInt32());
+                identityCount = reader.ReadUInt32();
+                if (reader.ReadUInt32() != finalistCount) throw new InvalidDataException("Catalog selection finalist count changed while parsing.");
+                result.InitialCandidateCount = reader.ReadUInt32();
+                result.ProposalScores = reader.ReadUInt32();
+                result.AcceptedMutations = reader.ReadUInt32();
+                result.Rounds = reader.ReadUInt32();
+                result.EarlyStopIdentityCount = reader.ReadUInt32();
+                result.KernelCount = reader.ReadUInt32();
+                result.ServerMilliseconds = reader.ReadDouble();
+            }
+            var chains = new List<CudaCatalogChainResult>(finalistCount);
+            using (var reader = Reader(tail))
+            {
+                for (var index = 0; index < finalistCount; index++)
+                {
+                    var atlasIndex = reader.ReadUInt32();
+                    if (atlasIndex >= identityCount) throw new InvalidDataException("Catalog selection atlas index is invalid.");
+                    uint groupId;
+                    var candidate = ReadCatalogCandidate(reader, out groupId);
+                    var score = ReadScore(reader);
+                    if (candidate.CandidateId != score.CandidateId) throw new InvalidDataException("Catalog selection candidate and score IDs differ: " + candidate.CandidateId + " != " + score.CandidateId + ".");
+                    chains.Add(new CudaCatalogChainResult { AtlasIndex = checked((int)atlasIndex), GroupId = groupId, Candidate = candidate, Score = score });
+                }
+            }
+            result.Chains = new ReadOnlyCollection<CudaCatalogChainResult>(chains);
+            return result;
+        }
+
         public static CudaSelectLayerResult ParseMixedResponse(byte[] prefix, byte[] tail)
         {
             RequireLength(prefix, MixedResponsePrefixSize, "prefix");
@@ -526,6 +617,22 @@ namespace GTAEmblemMaker.Core
                 OldErrorDelta = reader.ReadUInt64(),
                 NewErrorDelta = reader.ReadUInt64()
             };
+        }
+
+        private static CudaCatalogCandidate ReadCatalogCandidate(BinaryReader reader, out uint groupId)
+        {
+            var candidate = new CudaCatalogCandidate
+            {
+                CandidateId = reader.ReadUInt32(),
+                Cx = reader.ReadInt32() / 10000.0,
+                Cy = reader.ReadInt32() / 10000.0,
+                Rx = reader.ReadInt32() / 10000.0,
+                Ry = reader.ReadInt32() / 10000.0,
+                Alpha = reader.ReadInt32(),
+                AngleDegrees = reader.ReadSingle()
+            };
+            groupId = reader.ReadUInt32();
+            return candidate;
         }
 
         private static bool ReadBoolean(BinaryReader reader, string field)

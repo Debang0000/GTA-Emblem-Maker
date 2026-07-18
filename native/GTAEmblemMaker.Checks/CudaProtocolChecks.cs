@@ -18,6 +18,7 @@ namespace GTAEmblemMaker.Checks
             CheckShutdownRequest();
             CheckSetCatalogAtlasesRequest();
             CheckResidentCatalogBatchRequest();
+            CheckResidentCatalogSelectionRequest();
             CheckRotatedResidentRequest();
             CheckMixedResidentRequest();
             CheckRotatedRequest();
@@ -102,6 +103,13 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(3, BitConverter.ToInt32(request, 16), "CUDA resident catalog atlas index");
             Check.Equal(2, BitConverter.ToInt32(request, 20), "CUDA resident catalog batch candidate count");
             Check.Equal(88, request.Length, "CUDA resident catalog score payload length");
+        }
+
+        private static void CheckResidentCatalogSelectionRequest()
+        {
+            Check.SequenceEqual(UInt32Fields(27, 1, 11, 512, 1174, 2, 0x12345678),
+                CudaProtocol.CreateResidentCatalogSelectionRequest(11, 512, 1174, 2, 0x12345678, true),
+                "CUDA resident catalog selection layout");
         }
 
         private static void CheckRotatedRequest()

@@ -203,7 +203,7 @@ namespace GTAEmblemMaker.Core
                     for (var index = 0; index < shapes.Count; index++)
                     {
                         var state = shapes[index];
-                        var export = GTAEmblemMaker.Core.Shapes.ToExportShape(state);
+                        var export = GTAEmblemMaker.Core.Shapes.ToExportShape(state, payload.ExportMinAxis);
                         var values = RockstarExporter.MatrixValues(export);
                         var matrix = new SKMatrix
                         {

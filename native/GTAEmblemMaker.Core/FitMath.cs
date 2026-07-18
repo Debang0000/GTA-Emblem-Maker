@@ -438,6 +438,14 @@ namespace GTAEmblemMaker.Core
             return lines;
         }
 
+        internal static IReadOnlyList<RasterLine> RasterizeCompatibilityCandidate(FitCandidate candidate, int width, int height)
+        {
+            if (candidate == null) throw new ArgumentNullException("candidate");
+            if (width <= 0) throw new ArgumentOutOfRangeException("width");
+            if (height <= 0) throw new ArgumentOutOfRangeException("height");
+            return RasterizeCompatibility(candidate, width, height);
+        }
+
         private static IReadOnlyList<RasterLine> RasterizeCatalog(FitCandidate candidate, int width, int height)
         {
             if (width != 512 || height != 512) throw new ArgumentException("Official catalog rasterization requires the Rockstar 512x512 canvas.");
@@ -468,6 +476,13 @@ namespace GTAEmblemMaker.Core
             if (currentRgba == null) throw new ArgumentNullException("currentRgba");
             if (width <= 0 || currentRgba.Length == 0 || currentRgba.Length % (width * 4) != 0) throw new ArgumentException("Current RGBA dimensions are invalid.", "currentRgba");
             ApplyCandidateCore(null, currentRgba, width, candidate, null, 0, false);
+        }
+
+        internal static void ApplyCompatibilityCandidate(byte[] currentRgba, int width, FitCandidate candidate)
+        {
+            if (currentRgba == null) throw new ArgumentNullException("currentRgba");
+            if (width <= 0 || currentRgba.Length == 0 || currentRgba.Length % (width * 4) != 0) throw new ArgumentException("Current RGBA dimensions are invalid.", "currentRgba");
+            ApplyCandidateCore(null, currentRgba, width, candidate, null, 0, true);
         }
 
         internal static long ApplyCandidateAndUpdateError(byte[] targetRgba, byte[] currentRgba, int width, FitCandidate candidate, byte[] weightsQ8, long baseTotalError)

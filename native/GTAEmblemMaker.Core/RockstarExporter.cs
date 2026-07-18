@@ -15,14 +15,16 @@ namespace GTAEmblemMaker.Core
         public int GeneratedCodeLength { get; private set; }
         public int ClipboardCodeLength { get; private set; }
         public string BackgroundColor { get; private set; }
+        internal int ExportMinAxis { get; private set; }
 
-        internal RockstarPayload(string svg, string consoleCode, int generatedCodeLength, string backgroundColor)
+        internal RockstarPayload(string svg, string consoleCode, int generatedCodeLength, string backgroundColor, int exportMinAxis)
         {
             Svg = svg;
             ConsoleCode = consoleCode;
             GeneratedCodeLength = generatedCodeLength;
             ClipboardCodeLength = consoleCode.Length;
             BackgroundColor = backgroundColor;
+            ExportMinAxis = exportMinAxis;
         }
     }
 
@@ -33,30 +35,65 @@ namespace GTAEmblemMaker.Core
 
         public static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent)
         {
-            return Build(states, transparent, 255, 255, 255, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            return Build(states, transparent, 255, 255, 255, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), false);
         }
 
         internal static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent, long timestamp)
         {
-            return Build(states, transparent, 255, 255, 255, timestamp);
+            return Build(states, transparent, 255, 255, 255, timestamp, false);
+        }
+
+        internal static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent, long timestamp, bool compatibilityCode)
+        {
+            return Build(states, transparent, 255, 255, 255, timestamp, compatibilityCode, compatibilityCode ? 2 : (int)Shapes.MinEllipseAxis);
         }
 
         public static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue)
         {
-            return Build(states, transparent, opaqueRed, opaqueGreen, opaqueBlue, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            return Build(states, transparent, opaqueRed, opaqueGreen, opaqueBlue, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), false);
         }
 
         internal static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp)
         {
+            return Build(states, transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, false);
+        }
+
+        internal static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp, bool compatibilityCode)
+        {
+            return Build(states, transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, compatibilityCode, compatibilityCode ? 2 : (int)Shapes.MinEllipseAxis);
+        }
+
+        internal static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp, bool compatibilityCode, int exportMinAxis)
+        {
+            return Build(states, transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, compatibilityCode, exportMinAxis, null);
+        }
+
+        internal static RockstarPayload Build(IReadOnlyList<ShapeState> states, bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp, bool compatibilityCode, int exportMinAxis, IReadOnlyList<string> compatibilityLayerIds)
+        {
             if (states == null) throw new ArgumentNullException("states");
-            var builder = CreateBuilder(transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp);
+            var builder = CreateBuilder(transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, compatibilityCode, exportMinAxis, compatibilityLayerIds);
             for (var index = 0; index < states.Count; index++) builder.Add(states[index]);
             return builder.Build();
         }
 
         internal static IncrementalBuilder CreateBuilder(bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp)
         {
-            return new IncrementalBuilder(transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp);
+            return CreateBuilder(transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, false);
+        }
+
+        internal static IncrementalBuilder CreateBuilder(bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp, bool compatibilityCode)
+        {
+            return CreateBuilder(transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, compatibilityCode, compatibilityCode ? 2 : (int)Shapes.MinEllipseAxis);
+        }
+
+        internal static IncrementalBuilder CreateBuilder(bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp, bool compatibilityCode, int exportMinAxis)
+        {
+            return CreateBuilder(transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, compatibilityCode, exportMinAxis, null);
+        }
+
+        internal static IncrementalBuilder CreateBuilder(bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp, bool compatibilityCode, int exportMinAxis, IReadOnlyList<string> compatibilityLayerIds)
+        {
+            return new IncrementalBuilder(transparent, opaqueRed, opaqueGreen, opaqueBlue, timestamp, compatibilityCode, exportMinAxis, compatibilityLayerIds);
         }
 
         private static string BackgroundLayer(string color)
@@ -69,7 +106,7 @@ namespace GTAEmblemMaker.Core
             var values = MatrixValues(shape);
             var x = shape.UsesIntrinsicAnchor ? shape.X + (shape.Width - shape.Definition.Width) / 2 : shape.X;
             var y = shape.UsesIntrinsicAnchor ? shape.Y + (shape.Height - shape.Definition.Height) / 2 : shape.Y;
-            return "{\"id\":\"" + id + "\",\"name\":\"" + shape.Definition.Name + "\",\"type\":\"path\",\"y\":" + FormatNumber(y) + ",\"x\":" + FormatNumber(x) + ",\"scaleY\":" + FormatNumber(values.ScaleY * 100) + ",\"scaleX\":" + FormatNumber(values.ScaleX * 100) + ",\"invertedY\":false,\"invertedX\":false,\"rotation\":" + FormatNumber(shape.Rotation) + ",\"opacity\":" + FormatNumber(Math.Max(0, Math.Min(255, shape.Alpha)) / 255.0 * 100) + ",\"index\":" + index.ToString(CultureInfo.InvariantCulture) + ",\"color\":\"" + shape.Color + "\",\"isFilled\":true,\"internal\":false,\"locked\":false,\"tBold\":false,\"tItalic\":false,\"fontFamily\":null,\"borderColor\":\"#a1a1a1\",\"borderSize\":0,\"gradientStyle\":\"Fill\",\"slug\":\"" + shape.Definition.Slug + "\",\"width\":" + FormatNumber(shape.Definition.Width) + ",\"height\":" + FormatNumber(shape.Definition.Height) + "}";
+            return "{\"id\":\"" + id + "\",\"name\":\"" + shape.Definition.Name + "\",\"type\":\"path\",\"y\":" + FormatNumber(y) + ",\"x\":" + FormatNumber(x) + ",\"scaleY\":" + FormatNumber(values.ScaleY * 100) + ",\"scaleX\":" + FormatNumber(values.ScaleX * 100) + ",\"invertedY\":false,\"invertedX\":false,\"rotation\":" + FormatNumber(shape.Rotation) + ",\"opacity\":" + FormatNumber(Math.Max(0, Math.Min(255, shape.Alpha)) / 255.0 * 100) + ",\"index\":" + index.ToString(CultureInfo.InvariantCulture) + ",\"color\":\"" + shape.Color + "\",\"isFilled\":true,\"internal\":false,\"locked\":false,\"tBold\":false,\"tItalic\":false,\"fontFamily\":null,\"borderColor\":\"#a1a1a1\",\"borderSize\":0,\"gradientStyle\":\"Fill\",\"slug\":\"" + shape.Definition.Slug + "\",\"width\":" + DefinitionNumber(shape.Definition.WidthText, shape.Definition.Width, shape.UsesIntrinsicAnchor) + ",\"height\":" + DefinitionNumber(shape.Definition.HeightText, shape.Definition.Height, shape.UsesIntrinsicAnchor) + "}";
         }
 
         private static string Matrix(ExportShape shape)
@@ -122,6 +159,12 @@ namespace GTAEmblemMaker.Core
             return sign + whole.ToString(CultureInfo.InvariantCulture) + "." + decimals;
         }
 
+        private static string DefinitionNumber(string explicitText, double value, bool intrinsicPrecision)
+        {
+            if (intrinsicPrecision && !String.IsNullOrEmpty(explicitText)) return explicitText;
+            return intrinsicPrecision ? value.ToString("R", CultureInfo.InvariantCulture) : FormatNumber(value);
+        }
+
         private static BigInteger ToFixedInteger(double value)
         {
             if (Double.IsNaN(value) || Double.IsInfinity(value)) throw new ArgumentOutOfRangeException("value");
@@ -156,22 +199,28 @@ namespace GTAEmblemMaker.Core
             private const string CodePrefix = "(async()=>{let b=Uint8Array.from(atob(\"";
             private const string DecodeCode = "\"),c=>c.charCodeAt()),s=await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream(\"gzip\"))).text(),p=s.indexOf(\"\\0\"),svgData=btoa(s.slice(0,p)),layerData=btoa(s.slice(p+1));";
             private const string CodeSuffix = "})()";
-            private const string BudgetSvgPrefix = "var svgData = \"";
-            private const string BudgetLayerPrefix = "\";\n\nvar layerData = \"";
-            private const string BudgetSuffix = "\";\n\n";
+            private const string ManualSvgPrefix = "var svgData = \"";
+            private const string ManualLayerPrefix = "\";\n\nvar layerData = \"";
+            private const string ManualSuffix = "\";\n\n" + SaveRequest;
 
             private readonly string backgroundColor;
+            private readonly bool compatibilityCode;
+            private readonly int exportMinAxis;
+            private readonly IReadOnlyList<string> compatibilityLayerIds;
             private readonly long timestamp;
             private readonly string svgPrefix;
             private readonly StringBuilder paths = new StringBuilder();
             private readonly StringBuilder layers = new StringBuilder();
             private int count;
 
-            internal IncrementalBuilder(bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp)
+            internal IncrementalBuilder(bool transparent, int opaqueRed, int opaqueGreen, int opaqueBlue, long timestamp, bool compatibilityCode, int exportMinAxis, IReadOnlyList<string> compatibilityLayerIds)
             {
                 ValidateByte(opaqueRed, "opaqueRed");
                 ValidateByte(opaqueGreen, "opaqueGreen");
                 ValidateByte(opaqueBlue, "opaqueBlue");
+                this.compatibilityCode = compatibilityCode;
+                this.exportMinAxis = exportMinAxis;
+                this.compatibilityLayerIds = compatibilityLayerIds;
                 this.timestamp = timestamp;
                 backgroundColor = transparent ? "#transparent" : RgbHex(opaqueRed, opaqueGreen, opaqueBlue);
                 svgPrefix = "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"512\" height=\"512\"><defs></defs><rect x=\"0\" y=\"0\" width=\"512\" height=\"512\" rx=\"0\" ry=\"0\" fill=\"" + (transparent ? "none" : backgroundColor) + "\" stroke=\"#a1a1a1\" fill-opacity=\"1\" stroke-opacity=\"0\" stroke-width=\"0\" stroke-miterlimit=\"10\"></rect>";
@@ -203,26 +252,36 @@ namespace GTAEmblemMaker.Core
             internal RockstarPayload Build()
             {
                 var svg = CurrentSvg();
-                var consoleCode = CodePrefix + CompressPayload(svg, CurrentLayerJson()) + DecodeCode + SaveRequest + CodeSuffix;
-                return new RockstarPayload(svg, consoleCode, CalculateBudgetCodeLength(), backgroundColor);
+                var layerJson = CurrentLayerJson();
+                var consoleCode = compatibilityCode
+                    ? BuildCompatibilityConsoleCode(svg, layerJson)
+                    : CodePrefix + CompressPayload(svg, layerJson) + DecodeCode + SaveRequest + CodeSuffix;
+                return new RockstarPayload(svg, consoleCode, CalculateBudgetCodeLength(), backgroundColor, exportMinAxis);
             }
 
             private void Append(ShapeState state)
             {
                 if (state == null) throw new ArgumentException("State entries cannot be null.", "state");
-                var shape = Shapes.ToExportShape(state);
+                var shape = Shapes.ToExportShape(state, exportMinAxis);
                 paths.Append("<path fill=\"").Append(shape.Color).Append('\"');
                 if (shape.Alpha < 255) paths.Append(" fill-opacity=\"").Append(FormatNumber(shape.Alpha / 255.0)).Append('\"');
                 paths.Append(" d=\"").Append(shape.Definition.Path).Append("\" transform=\"").Append(Matrix(shape)).Append("\"></path>");
-                layers.Append(',').Append(PathLayer("s" + timestamp.ToString(CultureInfo.InvariantCulture) + count.ToString(CultureInfo.InvariantCulture), count, shape));
+                layers.Append(',').Append(PathLayer(LayerId(), count, shape));
                 count++;
+            }
+
+            private string LayerId()
+            {
+                if (!compatibilityCode) return "s" + timestamp.ToString(CultureInfo.InvariantCulture) + count.ToString(CultureInfo.InvariantCulture);
+                if (compatibilityLayerIds != null && count < compatibilityLayerIds.Count && !String.IsNullOrEmpty(compatibilityLayerIds[count])) return compatibilityLayerIds[count];
+                return "s" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) + count.ToString(CultureInfo.InvariantCulture);
             }
 
             private int CalculateBudgetCodeLength()
             {
                 var svgLength = checked(svgPrefix.Length + paths.Length + SvgSuffix.Length);
                 var layerLength = checked(layers.Length + 2);
-                return checked(BudgetSvgPrefix.Length + Base64Length(svgLength) + BudgetLayerPrefix.Length + Base64Length(layerLength) + BudgetSuffix.Length + SaveRequest.Length);
+                return checked(ManualSvgPrefix.Length + Base64Length(svgLength) + ManualLayerPrefix.Length + Base64Length(layerLength) + ManualSuffix.Length);
             }
 
             private string CurrentSvg()
@@ -243,6 +302,15 @@ namespace GTAEmblemMaker.Core
                     using (var gzip = new GZipStream(output, CompressionLevel.Optimal, true)) gzip.Write(data, 0, data.Length);
                     return Convert.ToBase64String(output.ToArray());
                 }
+            }
+
+            private static string BuildCompatibilityConsoleCode(string svg, string layerJson)
+            {
+                return ManualSvgPrefix
+                    + Convert.ToBase64String(Encoding.UTF8.GetBytes(svg))
+                    + ManualLayerPrefix
+                    + Convert.ToBase64String(Encoding.UTF8.GetBytes(layerJson))
+                    + ManualSuffix;
             }
 
             private static int Base64Length(int byteCount)

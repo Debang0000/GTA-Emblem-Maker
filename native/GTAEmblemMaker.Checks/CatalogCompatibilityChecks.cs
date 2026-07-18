@@ -9,6 +9,26 @@ namespace GTAEmblemMaker.Checks
 {
     internal static class CatalogCompatibilityChecks
     {
+        internal static IReadOnlyList<ShapeState> LoadAcceptedStates(string selectedCandidatesPath)
+        {
+            var accepted = LoadAcceptedCandidates(selectedCandidatesPath);
+            var states = new List<ShapeState>(accepted.Length);
+            for (var index = 0; index < accepted.Length; index++)
+            {
+                var candidate = accepted[index].ToCandidate();
+                states.Add(CandidateGenerator.ToShapeState(candidate));
+            }
+            return states;
+        }
+
+        internal static IReadOnlyList<FitCandidate> LoadAcceptedReplayCandidates(string selectedCandidatesPath)
+        {
+            var accepted = LoadAcceptedCandidates(selectedCandidatesPath);
+            var candidates = new List<FitCandidate>(accepted.Length);
+            for (var index = 0; index < accepted.Length; index++) candidates.Add(accepted[index].ToCandidate());
+            return candidates;
+        }
+
         internal static void Run(string canonicalRgbaPath, string profileFolder, string scorerPath)
         {
             var expected = new JavaScriptSerializer().Deserialize<ExpectedState[]>(
@@ -46,37 +66,46 @@ namespace GTAEmblemMaker.Checks
             }
         }
 
-        internal static void RunCatalogCheckpoint(string canonicalRgbaPath, string selectedCandidatesPath, string profileFolder, string scorerPath)
+        internal static void RunCatalogCheckpoint(string canonicalRgbaPath, string selectedCandidatesPath, string profileFolder, string scorerPath, int selectedLayer, string modelFolder)
         {
-            var accepted = new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue }.Deserialize<AcceptedCandidate[]>(File.ReadAllText(selectedCandidatesPath));
-            if (accepted.Length < 501) throw new InvalidDataException("The accepted trace does not contain layer 501.");
+            var accepted = LoadAcceptedCandidates(selectedCandidatesPath);
+            if (selectedLayer < 1 || accepted.Length < selectedLayer) throw new InvalidDataException("The accepted trace does not contain the selected checkpoint layer.");
             var source = SourceImage.FromCanonical(File.ReadAllBytes(canonicalRgbaPath));
             var profile = FindProfile(ProfileCatalog.Load(profileFolder).Profiles, "v1-catalog-quality");
             var stage = FitMath.ResolveStage(profile, "current-image-fit");
             var target = (byte[])source.CanonicalRgba.Clone();
             var current = FitMath.CreateInitialCurrent(target, source.IsTransparent);
             var maps = FitMath.BuildWeightMaps(target, 512, 512);
-            var choice = FitMath.WeightMapChoiceForLayer(stage, source.IsTransparent, 500);
+            var replayCount = selectedLayer - 1;
+            var choice = FitMath.WeightMapChoiceForLayer(stage, source.IsTransparent, selectedLayer);
             var weights = maps[choice.WeightMapId].Q8;
             var baseTotalError = FitMath.WeightedFullError(target, current, weights);
-            for (var index = 0; index < 500; index++)
+            for (var index = 0; index < replayCount; index++)
             {
                 var candidate = accepted[index].ToCandidate();
                 baseTotalError = FitMath.ApplyCompatibilityCandidateAndUpdateError(target, current, 512, candidate, weights, baseTotalError);
             }
-            Check.Equal(accepted[499].Energy, FitMath.EnergyFromTotal(baseTotalError, 512, 512), "accepted layer 500 replay energy");
+            if (replayCount > 0) Check.Equal(accepted[replayCount - 1].Energy, FitMath.EnergyFromTotal(baseTotalError, 512, 512), "accepted checkpoint replay energy");
 
             using (var scorer = CudaScorerClient.Start(scorerPath, 512, 512, target, current))
             {
                 scorer.UpdateCurrentAsync(checked((ulong)baseTotalError), current, CancellationToken.None).GetAwaiter().GetResult();
                 scorer.SetWeightMapAsync(weights, CancellationToken.None).GetAwaiter().GetResult();
-                var shapes = FitMath.ShapeChoicesForLayer(stage, 501);
-                var request = FittingEngine.CreateSelectRequest(stage, 501, shapes, compatibilityResident: true);
+                var shapes = FitMath.ShapeChoicesForLayer(stage, selectedLayer);
+                var request = FittingEngine.CreateSelectRequest(stage, selectedLayer, shapes, compatibilityResident: true);
                 var selected = scorer.SelectLayerAsync(request, CancellationToken.None).GetAwaiter().GetResult();
                 var historical = CandidateGenerator.FromResidentResult(selected.SelectedShapeKind, selected.SelectedCandidate, selected.SelectedScore);
-                var catalog = CatalogCandidateSearch.SelectAsync(scorer, stage.CatalogSearch, 501, stage.MinAxis, CancellationToken.None).GetAwaiter().GetResult();
+                var catalog = CatalogCandidateSearch.SelectAsync(scorer, stage.CatalogSearch, selectedLayer, stage.MinAxis, CancellationToken.None).GetAwaiter().GetResult();
                 var actual = FittingEngine.ChooseLowestEnergyCandidate(historical, catalog.BestByIdentity);
-                accepted[500].CheckCandidate(actual, "catalog compatibility layer 501");
+                if (PerceptualReranker.ShouldRerank(stage.PerceptualRerank, selectedLayer, stage.MaxLayers))
+                {
+                    if (String.IsNullOrWhiteSpace(modelFolder)) throw new ArgumentException("The perceptual checkpoint requires a model folder.", "modelFolder");
+                    using (var perceptual = PerceptualClient.Start(modelFolder, stage.PerceptualRerank, CancellationToken.None))
+                    {
+                        actual = PerceptualReranker.SelectAsync(perceptual, stage.PerceptualRerank, target, current, selected.Chains, actual, CancellationToken.None, catalog.Candidates, compatibilityGeometry: true).GetAwaiter().GetResult().Candidate;
+                    }
+                }
+                accepted[selectedLayer - 1].CheckCandidate(actual, "catalog compatibility layer " + selectedLayer);
             }
         }
 
@@ -84,6 +113,11 @@ namespace GTAEmblemMaker.Checks
         {
             for (var index = 0; index < profiles.Count; index++) if (profiles[index].Id == id) return profiles[index];
             throw new InvalidOperationException("Required profile is missing: " + id);
+        }
+
+        private static AcceptedCandidate[] LoadAcceptedCandidates(string selectedCandidatesPath)
+        {
+            return new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue }.Deserialize<AcceptedCandidate[]>(File.ReadAllText(selectedCandidatesPath));
         }
 
         private static string GoldenFile(string name)
@@ -138,7 +172,7 @@ namespace GTAEmblemMaker.Checks
 
             internal FitCandidate ToCandidate()
             {
-                var kind = CandidateGenerator.ShapeKindFromName(PoolShapeFamily == "line-rect" ? "line-rect" : Shape);
+                var kind = CandidateGenerator.ShapeKindFromName(Shape == "rotated-rect" && PoolShapeFamily == "line-rect" ? "line-rect" : Shape);
                 return new FitCandidate(CandidateId, Group, kind, Shape, PoolShapeFamily, Cx, Cy, Rx, Ry, checked((byte)R), checked((byte)G), checked((byte)B), checked((byte)Alpha), AngleDegrees, Energy, OldErrorDelta, NewErrorDelta);
             }
 

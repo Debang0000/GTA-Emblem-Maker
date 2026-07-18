@@ -3,7 +3,7 @@
   "id": "v1-catalog-quality",
   "displayName": "Official Catalog Quality",
   "isDefault": false,
-  "minimumEngineVersion": "1.1.0",
+  "minimumEngineVersion": "1.1.1",
   "pipeline": {
     "runner": "catalog-compatible"
   },
@@ -55,8 +55,8 @@
         "maxTileRegressionPercent": 0.5
       },
       "perceptualRerank": {
-        "backend": "lpips-directml",
-        "model": "lpips-alex-v0.1-224",
+        "backend": "native-edge-detail",
+        "model": "native-edge-detail-v1",
         "batchSize": 48,
         "shapeBalanced": true,
         "topK": 48,

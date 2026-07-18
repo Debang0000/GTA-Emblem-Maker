@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,269 +25,36 @@ namespace GTAEmblemMaker.Core
 
     internal static class CatalogCandidateSearch
     {
-        private const int GroupCount = 16;
-        private const int Age = 100;
-        private const int Fanout = 8;
-        private const int EarlyStopRounds = 48;
-        private const int MaxHillSteps = 5000;
-
         internal static async Task<CatalogSelection> SelectAsync(CudaScorerClient scorer, CatalogSearch config, int layer, int minAxis, CancellationToken cancellationToken)
         {
             if (scorer == null) throw new ArgumentNullException("scorer");
             if (config == null) throw new ArgumentNullException("config");
-            var clock = Stopwatch.StartNew();
-            var searches = new List<CatalogIdentitySearch>(config.Identities.Count);
             var atlases = new List<CatalogMaskAtlasEntry>(config.Identities.Count);
-            var initialBatches = new List<CudaCatalogBatch>(config.Identities.Count);
+            for (var index = 0; index < config.Identities.Count; index++) atlases.Add(CatalogMaskAtlas.Find(config.Identities[index]));
+            var atlasMilliseconds = await scorer.SetCatalogAtlasesAsync(atlases, cancellationToken).ConfigureAwait(false);
+            var result = await scorer.SelectResidentCatalogAsync(config.Identities.Count, config.CandidatesPerGroup, layer, minAxis, CandidateGenerator.SeedForLayer(layer), true, cancellationToken).ConfigureAwait(false);
+            var finalists = new List<FitCandidate>(result.Chains.Count);
+            for (var index = 0; index < result.Chains.Count; index++)
+            {
+                var chain = result.Chains[index];
+                finalists.Add(CandidateGenerator.FromCatalogResult(config.Identities[chain.AtlasIndex], chain.GroupId, chain.Candidate, chain.Score));
+            }
+            var bestByIdentity = new List<FitCandidate>(config.Identities.Count);
             for (var identityIndex = 0; identityIndex < config.Identities.Count; identityIndex++)
             {
-                var atlas = CatalogMaskAtlas.Find(config.Identities[identityIndex]);
-                var seed = unchecked(CandidateGenerator.SeedForLayer(layer) + (uint)((identityIndex + 1) * 2000003));
-                var search = new CatalogIdentitySearch(identityIndex, atlas, seed, layer, minAxis, config.CandidatesPerGroup);
-                atlases.Add(atlas);
-                searches.Add(search);
-                initialBatches.Add(new CudaCatalogBatch(identityIndex, search.InitialCandidates));
+                var identity = config.Identities[identityIndex];
+                bestByIdentity.Add(finalists.Where(candidate => candidate.Shape == identity).OrderBy(candidate => candidate.Energy).ThenBy(candidate => candidate.CandidateId).First());
             }
-            await scorer.SetCatalogAtlasesAsync(atlases, cancellationToken).ConfigureAwait(false);
-            var initialScores = (await scorer.ScoreResidentCatalogAsync(initialBatches, true, cancellationToken).ConfigureAwait(false)).Scores;
-            var scoreOffset = 0;
-            for (var index = 0; index < searches.Count; index++)
-            {
-                searches[index].Initialize(initialScores, scoreOffset);
-                scoreOffset += searches[index].InitialCandidates.Count;
-            }
-
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var batches = new List<CudaCatalogBatch>(searches.Count);
-                var rounds = new List<CatalogRound>(searches.Count);
-                for (var index = 0; index < searches.Count; index++)
-                {
-                    var round = searches[index].CreateRound();
-                    if (round == null) continue;
-                    batches.Add(new CudaCatalogBatch(searches[index].AtlasIndex, round.Proposals));
-                    rounds.Add(round);
-                }
-                if (batches.Count == 0) break;
-                var scores = (await scorer.ScoreResidentCatalogAsync(batches, true, cancellationToken).ConfigureAwait(false)).Scores;
-                scoreOffset = 0;
-                for (var index = 0; index < rounds.Count; index++)
-                {
-                    rounds[index].Search.AcceptRound(rounds[index], scores, scoreOffset);
-                    scoreOffset += rounds[index].Proposals.Count;
-                }
-            }
-
-            var finalists = new List<FitCandidate>(config.Identities.Count * GroupCount);
-            var bestByIdentity = new List<FitCandidate>(config.Identities.Count);
-            for (var identityIndex = 0; identityIndex < searches.Count; identityIndex++)
-            {
-                var chains = searches[identityIndex].Results();
-                finalists.AddRange(chains);
-                bestByIdentity.Add(chains.OrderBy(candidate => candidate.Energy).ThenBy(candidate => candidate.CandidateId).First());
-            }
-            clock.Stop();
             var best = finalists.OrderBy(candidate => candidate.Energy).ThenBy(candidate => candidate.PoolShapeFamily, StringComparer.Ordinal).ThenBy(candidate => candidate.CandidateId).First();
-            return new CatalogSelection(best, finalists, bestByIdentity, clock.Elapsed.TotalMilliseconds);
-        }
-
-        private static CudaCatalogCandidate Mutate(CatalogChain chain, uint candidateId, int minAxis)
-        {
-            var source = chain.Candidate;
-            var candidate = new CudaCatalogCandidate
-            {
-                CandidateId = candidateId,
-                Cx = source.Cx,
-                Cy = source.Cy,
-                Rx = source.Rx,
-                Ry = source.Ry,
-                Alpha = source.Alpha,
-                AngleDegrees = source.AngleDegrees
-            };
-            switch (chain.Random.Intn(4))
-            {
-                case 0:
-                    candidate.Cx = Clamp((int)candidate.Cx + (int)(chain.Random.Normal() * 16), 0, 511);
-                    candidate.Cy = Clamp((int)candidate.Cy + (int)(chain.Random.Normal() * 16), 0, 511);
-                    break;
-                case 1: candidate.Rx = Clamp((int)candidate.Rx + (int)(chain.Random.Normal() * 16), minAxis, 512); break;
-                case 2: candidate.Ry = Clamp((int)candidate.Ry + (int)(chain.Random.Normal() * 16), minAxis, 512); break;
-                default: candidate.AngleDegrees = (float)Wrap(candidate.AngleDegrees + (int)(chain.Random.Normal() * 15), 180); break;
-            }
-            candidate.Alpha = Clamp(candidate.Alpha + chain.Random.Intn(21) - 10, 1, 255);
-            return candidate;
+            return new CatalogSelection(best, finalists, bestByIdentity, atlasMilliseconds + result.ServerMilliseconds);
         }
 
         internal static uint ProposalCandidateId(int round, int group, int fanoutIndex)
         {
             if (round < 1) throw new ArgumentOutOfRangeException("round");
-            if (group < 0 || group >= GroupCount) throw new ArgumentOutOfRangeException("group");
-            if (fanoutIndex < 0 || fanoutIndex >= Fanout) throw new ArgumentOutOfRangeException("fanoutIndex");
-            return checked((uint)((round * 1000 + group * Fanout + fanoutIndex) * 1000 + group + 1));
-        }
-
-        private static bool Better(CudaScore left, CudaScore right)
-        {
-            return left.Energy < right.Energy || left.Energy == right.Energy && left.CandidateId < right.CandidateId;
-        }
-
-        private static int Clamp(int value, int minimum, int maximum) { return Math.Max(minimum, Math.Min(maximum, value)); }
-        private static double Wrap(double value, double maximum) { value %= maximum; return value < 0 ? value + maximum : value; }
-
-        private sealed class CatalogIdentitySearch
-        {
-            private readonly CatalogMaskAtlasEntry atlas;
-            private readonly int layer;
-            private readonly int minAxis;
-            private readonly int candidatesPerGroup;
-            private readonly List<CatalogChain> chains = new List<CatalogChain>(GroupCount);
-            private int round = 1;
-            private int roundsWithoutAccept;
-
-            internal int AtlasIndex { get; private set; }
-            internal List<CudaCatalogCandidate> InitialCandidates { get; private set; }
-
-            internal CatalogIdentitySearch(int atlasIndex, CatalogMaskAtlasEntry atlas, uint seed, int layer, int minAxis, int candidatesPerGroup)
-            {
-                AtlasIndex = atlasIndex;
-                this.atlas = atlas;
-                this.layer = layer;
-                this.minAxis = minAxis;
-                this.candidatesPerGroup = candidatesPerGroup;
-                var random = new CatalogRandom(seed);
-                InitialCandidates = new List<CudaCatalogCandidate>(checked(candidatesPerGroup * GroupCount));
-                for (var group = 0; group < GroupCount; group++)
-                    for (var index = 0; index < candidatesPerGroup; index++)
-                        InitialCandidates.Add(new CudaCatalogCandidate
-                        {
-                            CandidateId = (uint)(InitialCandidates.Count + 1),
-                            Cx = random.Intn(512),
-                            Cy = random.Intn(512),
-                            Rx = random.Intn(29) + minAxis,
-                            Ry = random.Intn(29) + minAxis,
-                            Alpha = CandidateGenerator.InitialAlpha,
-                            AngleDegrees = (float)(random.NextFloat() * 180)
-                        });
-            }
-
-            internal void Initialize(IReadOnlyList<CudaScore> scores, int scoreOffset)
-            {
-                for (var group = 0; group < GroupCount; group++)
-                {
-                    var first = group * candidatesPerGroup;
-                    var best = first;
-                    for (var index = first + 1; index < first + candidatesPerGroup; index++)
-                        if (Better(scores[scoreOffset + index], scores[scoreOffset + best])) best = index;
-                    chains.Add(new CatalogChain(group, InitialCandidates[best], scores[scoreOffset + best], new CatalogRandom(unchecked((uint)(97531 + layer * 1009 + group * 9176)))));
-                }
-            }
-
-            internal CatalogRound CreateRound()
-            {
-                if (roundsWithoutAccept >= EarlyStopRounds) return null;
-                var proposals = new List<CudaCatalogCandidate>();
-                var owners = new List<int>();
-                for (var chainIndex = 0; chainIndex < chains.Count; chainIndex++)
-                {
-                    var chain = chains[chainIndex];
-                    if (chain.RemainingAge <= 0 || chain.Steps >= MaxHillSteps) continue;
-                    for (var fanout = 0; fanout < Fanout; fanout++)
-                    {
-                        proposals.Add(Mutate(chain, ProposalCandidateId(round, chain.Group, fanout), minAxis));
-                        owners.Add(chainIndex);
-                    }
-                    chain.Steps++;
-                }
-                return proposals.Count == 0 ? null : new CatalogRound(this, proposals, owners);
-            }
-
-            internal void AcceptRound(CatalogRound work, IReadOnlyList<CudaScore> scores, int scoreOffset)
-            {
-                var accepted = 0;
-                for (var chainIndex = 0; chainIndex < chains.Count; chainIndex++)
-                {
-                    var bestProposal = -1;
-                    for (var index = 0; index < work.Owners.Count; index++)
-                    {
-                        if (work.Owners[index] != chainIndex) continue;
-                        if (bestProposal < 0 || Better(scores[scoreOffset + index], scores[scoreOffset + bestProposal])) bestProposal = index;
-                    }
-                    if (bestProposal >= 0 && Better(scores[scoreOffset + bestProposal], chains[chainIndex].Score))
-                    {
-                        chains[chainIndex].Candidate = work.Proposals[bestProposal];
-                        chains[chainIndex].Score = scores[scoreOffset + bestProposal];
-                        chains[chainIndex].RemainingAge = Age;
-                        accepted++;
-                    }
-                    else if (bestProposal >= 0)
-                    {
-                        chains[chainIndex].RemainingAge--;
-                    }
-                }
-                roundsWithoutAccept = accepted == 0 ? roundsWithoutAccept + 1 : 0;
-                round++;
-            }
-
-            internal List<FitCandidate> Results()
-            {
-                var result = new List<FitCandidate>(chains.Count);
-                foreach (var chain in chains) result.Add(CandidateGenerator.FromCatalogResult(atlas.Identifier, (uint)chain.Group, chain.Candidate, chain.Score));
-                return result;
-            }
-        }
-
-        private sealed class CatalogRound
-        {
-            internal CatalogIdentitySearch Search { get; private set; }
-            internal List<CudaCatalogCandidate> Proposals { get; private set; }
-            internal List<int> Owners { get; private set; }
-
-            internal CatalogRound(CatalogIdentitySearch search, List<CudaCatalogCandidate> proposals, List<int> owners)
-            {
-                Search = search;
-                Proposals = proposals;
-                Owners = owners;
-            }
-        }
-
-        private sealed class CatalogChain
-        {
-            internal int Group;
-            internal CudaCatalogCandidate Candidate;
-            internal CudaScore Score;
-            internal CatalogRandom Random;
-            internal int RemainingAge = Age;
-            internal int Steps;
-
-            internal CatalogChain(int group, CudaCatalogCandidate candidate, CudaScore score, CatalogRandom random)
-            {
-                Group = group;
-                Candidate = candidate;
-                Score = score;
-                Random = random;
-            }
-        }
-
-        private sealed class CatalogRandom
-        {
-            private uint state;
-            private bool hasSpare;
-            private double spare;
-
-            internal CatalogRandom(uint seed) { state = seed; }
-            internal double NextFloat() { state = unchecked(state * 1664525u + 1013904223u); return state / 4294967296.0; }
-            internal int Intn(int maximum) { return (int)Math.Floor(NextFloat() * maximum); }
-            internal double Normal()
-            {
-                if (hasSpare) { hasSpare = false; return spare; }
-                var u = Math.Max(2.2204460492503131e-16, NextFloat());
-                var v = NextFloat();
-                var radius = Math.Sqrt(-2 * Math.Log(u));
-                spare = radius * Math.Sin(2 * Math.PI * v);
-                hasSpare = true;
-                return radius * Math.Cos(2 * Math.PI * v);
-            }
+            if (group < 0 || group >= 16) throw new ArgumentOutOfRangeException("group");
+            if (fanoutIndex < 0 || fanoutIndex >= 8) throw new ArgumentOutOfRangeException("fanoutIndex");
+            return checked((uint)((round * 1000 + group * 8 + fanoutIndex) * 1000 + group + 1));
         }
     }
 }

@@ -37,6 +37,8 @@ namespace GTAEmblemMaker.Checks
                 var payload = RockstarExporter.Build(new[] { state }, true, 1700000000000);
                 Check.True(payload.GeneratedCodeLength <= 1250000, "catalog search payload budget");
                 Check.Equal("#transparent", payload.BackgroundColor, "catalog search transparency");
+                Check.Equal(1, (int)scorer.PerformanceCounters.ResidentCatalogScoreCommandCount, "catalog search uses one bounded scorer command");
+                Check.Equal(1, (int)scorer.PerformanceCounters.ResidentCatalogSynchronizationCount, "catalog search uses one scorer synchronization");
             }
         }
 
@@ -49,7 +51,17 @@ namespace GTAEmblemMaker.Checks
                 candidates.Add(new FitCandidate((uint)index, 0, CandidateShapeKind.OfficialCatalog, "catalog-curve-61", "catalog-curve-61", 256, 256, 20, 20, 0, 0, 0, 255, 0, index + 0.5, 0, 0));
             }
             var selected = PerceptualReranker.SelectCandidates(candidates, profile.Stages[0].PerceptualRerank);
-            Check.True(selected.Exists(candidate => candidate.Kind == CandidateShapeKind.OfficialCatalog), "catalog candidates enter AlexNet rerank pool");
+            Check.True(selected.Exists(candidate => candidate.Kind == CandidateShapeKind.OfficialCatalog), "catalog candidates enter perceptual rerank pool");
+
+            var mseBest = new FitCandidate(7, 0, CandidateShapeKind.LineRectangle, "rotated-rect", "line-rect", 256, 256, 20, 2, 0, 0, 0, 255, 0, 1, 0, 0);
+            var catalogSelected = new FitCandidate(8, 0, CandidateShapeKind.OfficialCatalog, "catalog-curve-61", "catalog-curve-61", 256, 256, 20, 2, 0, 0, 0, 255, 0, 0.5, 0, 0);
+            var mappedCatalog = PerceptualReranker.MapAcceptedPoolFamily(catalogSelected, mseBest);
+            Check.Equal("catalog-curve-61", mappedCatalog.Shape, "catalog rerank keeps selected geometry");
+            Check.Equal("line-rect", mappedCatalog.PoolShapeFamily, "catalog rerank keeps accepted choice family");
+
+            var historicalSelected = new FitCandidate(9, 0, CandidateShapeKind.RotatedEllipse, "rotated", "rotated", 256, 256, 20, 2, 0, 0, 0, 255, 0, 0.25, 0, 0);
+            var mappedHistorical = PerceptualReranker.MapAcceptedPoolFamily(historicalSelected, mseBest);
+            Check.Equal("rotated", mappedHistorical.PoolShapeFamily, "historical rerank keeps selected family");
         }
     }
 }

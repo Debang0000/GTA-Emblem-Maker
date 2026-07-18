@@ -155,7 +155,7 @@ namespace GTAEmblemMaker.Core
             var multiScaleStrokeGuide = stage.StrokeSearch != null && stage.StrokeSearch.IsMultiScale ? FitMath.BuildMultiScaleStrokeGuide(target, Width, Height, stage.StrokeSearch.TileSize) : null;
             var structuralGuide = stage.StrokeSearch != null && stage.StrokeSearch.StructuralRefine != null ? FitMath.BuildStructuralGuide(target, Width, Height, stage.StrokeSearch.StructuralRefine.DistanceLimit) : null;
             var timestamp = request.Timestamp != 0 ? request.Timestamp : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var payloadBuilder = RockstarExporter.CreateBuilder(request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp);
+            var payloadBuilder = RockstarExporter.CreateBuilder(request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, compatibilityResident, compatibilityResident ? stage.MinAxis : (int)Shapes.MinEllipseAxis);
             var overfitLayers = LayerOptimizer.PercentageCount(maximumLayers, stage.LayerOptimization.OverfitPercent);
             var refineLayers = LayerOptimizer.PercentageCount(maximumLayers, stage.LayerOptimization.RefinePercent);
             var firstPruneAt = checked(maximumLayers + overfitLayers);
@@ -201,7 +201,7 @@ namespace GTAEmblemMaker.Core
                         {
                             LayerOptimizer.RetainBestByRemoval(target, initialCurrent, states, trace, improvements, activeMap.Q8, Width, maximumLayers, stage.LayerOptimization.RankingPoolMultiplier, cancellationToken);
                             current = LayerOptimizer.RebuildCurrent(initialCurrent, states, Width);
-                            payloadBuilder = RebuildPayload(states, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget);
+                            payloadBuilder = RebuildPayload(states, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget, compatibilityResident, stage.MinAxis);
                             baseTotalError = FitMath.WeightedFullError(target, current, activeMap.Q8);
                             await client.UpdateCurrentAsync(checked((ulong)baseTotalError), current, cancellationToken).ConfigureAwait(false);
                             if (weightMapChanged) await client.SetWeightMapAsync(activeMap.Q8, cancellationToken).ConfigureAwait(false);
@@ -242,7 +242,7 @@ namespace GTAEmblemMaker.Core
                         if (perceptual != null && mixed && selected.Chains.Count > 1 && PerceptualReranker.ShouldRerank(stage.PerceptualRerank, layer, stage.MaxLayers))
                         {
                             var perceptualClock = Stopwatch.StartNew();
-                            perceptualSelection = await PerceptualReranker.SelectAsync(perceptual, stage.PerceptualRerank, target, current, selected.Chains, candidate, cancellationToken, catalogSelection == null ? null : catalogSelection.Candidates).ConfigureAwait(false);
+                            perceptualSelection = await PerceptualReranker.SelectAsync(perceptual, stage.PerceptualRerank, target, current, selected.Chains, candidate, cancellationToken, catalogSelection == null ? null : catalogSelection.Candidates, compatibilityResident).ConfigureAwait(false);
                             perceptualClock.Stop();
                             perceptualMilliseconds = perceptualClock.Elapsed.TotalMilliseconds;
                             candidate = perceptualSelection.Candidate;
@@ -264,7 +264,7 @@ namespace GTAEmblemMaker.Core
                         {
                             LayerOptimizer.RetainBestByRemoval(target, initialCurrent, states, trace, improvements, activeMap.Q8, Width, maximumLayers, stage.LayerOptimization.RankingPoolMultiplier, cancellationToken);
                             current = LayerOptimizer.RebuildCurrent(initialCurrent, states, Width);
-                            payloadBuilder = RebuildPayload(states, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget);
+                            payloadBuilder = RebuildPayload(states, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget, compatibilityResident, stage.MinAxis);
                             baseTotalError = FitMath.WeightedFullError(target, current, activeMap.Q8);
                         }
                         else if (layer < totalAttempts)
@@ -283,7 +283,7 @@ namespace GTAEmblemMaker.Core
                     {
                         LayerOptimizer.RetainBestByRemoval(target, initialCurrent, states, trace, improvements, activeMap.Q8, Width, maximumLayers, stage.LayerOptimization.RankingPoolMultiplier, cancellationToken);
                         current = LayerOptimizer.RebuildCurrent(initialCurrent, states, Width);
-                        payloadBuilder = RebuildPayload(states, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget);
+                        payloadBuilder = RebuildPayload(states, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget, compatibilityResident, stage.MinAxis);
                         baseTotalError = FitMath.WeightedFullError(target, current, activeMap.Q8);
                     }
                     if (replacementAttempts > 0 && states.Count > 0)
@@ -313,7 +313,7 @@ namespace GTAEmblemMaker.Core
                             if (perceptual != null && mixed)
                             {
                                 var perceptualClock = Stopwatch.StartNew();
-                                perceptualSelection = await PerceptualReranker.SelectAsync(perceptual, stage.PerceptualRerank, target, withoutRemoved, selected.Chains, candidate, cancellationToken).ConfigureAwait(false);
+                                perceptualSelection = await PerceptualReranker.SelectAsync(perceptual, stage.PerceptualRerank, target, withoutRemoved, selected.Chains, candidate, cancellationToken, compatibilityGeometry: compatibilityResident).ConfigureAwait(false);
                                 perceptualClock.Stop();
                                 perceptualMilliseconds = perceptualClock.Elapsed.TotalMilliseconds;
                                 candidate = perceptualSelection.Candidate;
@@ -321,7 +321,7 @@ namespace GTAEmblemMaker.Core
 
                             var replacementState = CandidateGenerator.ToShapeState(candidate);
                             proposalStates.Add(replacementState);
-                            var proposalBuilder = TryRebuildPayload(proposalStates, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget);
+                            var proposalBuilder = TryRebuildPayload(proposalStates, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget, compatibilityResident, stage.MinAxis);
                             var proposalCurrent = (byte[])withoutRemoved.Clone();
                             var proposalError = compatibilityResident
                                 ? FitMath.ApplyCompatibilityCandidateAndUpdateError(target, proposalCurrent, Width, candidate, activeMap.Q8, withoutRemovedError)
@@ -374,16 +374,16 @@ namespace GTAEmblemMaker.Core
             return best;
         }
 
-        private static RockstarExporter.IncrementalBuilder RebuildPayload(IReadOnlyList<ShapeState> states, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int budget)
+        private static RockstarExporter.IncrementalBuilder RebuildPayload(IReadOnlyList<ShapeState> states, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int budget, bool compatibilityCode, int minAxis)
         {
-            var builder = TryRebuildPayload(states, transparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget);
+            var builder = TryRebuildPayload(states, transparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget, compatibilityCode, minAxis);
             if (builder == null) throw new InvalidOperationException("Optimized layers exceed the code budget.");
             return builder;
         }
 
-        private static RockstarExporter.IncrementalBuilder TryRebuildPayload(IReadOnlyList<ShapeState> states, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int budget)
+        private static RockstarExporter.IncrementalBuilder TryRebuildPayload(IReadOnlyList<ShapeState> states, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int budget, bool compatibilityCode, int minAxis)
         {
-            var builder = RockstarExporter.CreateBuilder(transparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp);
+            var builder = RockstarExporter.CreateBuilder(transparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, compatibilityCode, compatibilityCode ? minAxis : (int)Shapes.MinEllipseAxis);
             for (var index = 0; index < states.Count; index++)
             {
                 if (!builder.TryAdd(states[index], budget)) return null;

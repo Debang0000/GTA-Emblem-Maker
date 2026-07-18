@@ -1,5 +1,5 @@
 param(
-  [string]$OutDir = "release\GTAEmblemMaker-v1.1.0",
+  [string]$OutDir = "release\GTAEmblemMaker-v1.1.1",
   [string[]]$ProfilePaths = @(
     "profiles\v1-best-quality.json",
     "profiles\v1-beam-clean.json",
@@ -24,12 +24,17 @@ foreach ($profilePath in $ProfilePaths) {
     throw "Profile must be an existing file inside the repository: $profilePath"
   }
   $profile = Get-Content -LiteralPath $profileSource -Raw | ConvertFrom-Json
+  $backend = [string]$profile.stages[0].perceptualRerank.backend
   $model = [string]$profile.stages[0].perceptualRerank.model
-  if ([String]::IsNullOrWhiteSpace($model) -or [IO.Path]::GetFileName($model) -ne $model) { throw "Profile contains an invalid perceptual model ID." }
-  $modelSource = Join-Path $root "third_party\lpips-winml\model\$model.onnx"
-  if (-not (Test-Path -LiteralPath $modelSource)) { throw "Perceptual model is missing: $model" }
+  if ($backend -eq "lpips-directml") {
+    if ([String]::IsNullOrWhiteSpace($model) -or [IO.Path]::GetFileName($model) -ne $model) { throw "Profile contains an invalid perceptual model ID." }
+    $modelSource = Join-Path $root "third_party\lpips-winml\model\$model.onnx"
+    if (-not (Test-Path -LiteralPath $modelSource)) { throw "Perceptual model is missing: $model" }
+    $models[$model] = $modelSource
+  } elseif ($backend -ne "native-edge-detail") {
+    throw "Profile contains an unsupported perceptual backend: $backend"
+  }
   $profiles += [pscustomobject]@{ Source = $profileSource; Value = $profile }
-  $models[$model] = $modelSource
 }
 if ($profiles.Count -ne 4) { throw "The V1.1 package requires exactly four profiles." }
 
@@ -85,7 +90,7 @@ Run GTAEmblemMaker.exe.
 Pipelines: Best Quality, Beam Clean, Perceptual AlexNet 224, Official Catalog Quality.
 
 Requires Windows 10 version 1809 or newer, x64, .NET Framework 4.8, and a CUDA-capable NVIDIA GPU.
-Perceptual reranking uses LPIPS v0.1 through ONNX Runtime DirectML.
+The Perceptual profile uses LPIPS v0.1 through ONNX Runtime DirectML. Official Catalog Quality uses its native edge-detail reranker.
 Run outputs are stored under LocalAppData\GTAEmblemMaker\runs.
 "@ | Set-Content -LiteralPath (Join-Path $out "README.txt") -Encoding ASCII
 

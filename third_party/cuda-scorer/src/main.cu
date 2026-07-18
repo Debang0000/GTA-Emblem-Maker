@@ -58,6 +58,7 @@ enum ServerCommand : std::uint32_t {
     CMD_SCORE_BATCH_CATALOG_GEOMETRY_WEIGHTED = 24,
     CMD_SET_CATALOG_ATLASES = 25,
     CMD_SCORE_RESIDENT_CATALOG_BATCHES = 26,
+    CMD_SELECT_RESIDENT_CATALOG = 27,
 };
 
 constexpr int GEOMETRY_ELLIPSE = 0;
@@ -1231,6 +1232,26 @@ struct ResidentDeviceChunkStats {
     std::uint32_t lastAcceptRound = 0;
 };
 
+constexpr std::uint32_t CATALOG_GROUP_COUNT = 16;
+constexpr std::uint32_t CATALOG_AGE = 100;
+constexpr std::uint32_t CATALOG_FANOUT = 8;
+constexpr std::uint32_t CATALOG_EARLY_STOP_ROUNDS = 48;
+constexpr std::uint32_t CATALOG_MAX_HILL_STEPS = 5000;
+
+struct CatalogDeviceStats {
+    std::uint32_t proposalScores = 0;
+    std::uint32_t acceptedMutations = 0;
+    std::uint32_t rounds = 0;
+    std::uint32_t roundsWithoutAccept = 0;
+    std::uint32_t earlyStop = 0;
+    std::uint32_t stop = 0;
+};
+
+struct CatalogDeviceOutput {
+    ResidentDeviceChain chains[CATALOG_GROUP_COUNT];
+    CatalogDeviceStats stats{};
+};
+
 __device__ int resident_device_clamp_int(int value, int min_value, int max_value) {
     return value < min_value ? min_value : value > max_value ? max_value : value;
 }
@@ -1683,6 +1704,315 @@ __global__ void resident_rotated_geometry_coop_chunk_kernel(
         atomicAdd(&stats->proposalScores, local_proposals);
         atomicAdd(&stats->acceptedMutations, local_accepts);
         atomicMax(&stats->lastAcceptRound, local_last_accept_round);
+    }
+}
+
+__device__ bool catalog_score_better(const ScoreRecord& left, const ScoreRecord& right) {
+    return left.energy < right.energy || (left.energy == right.energy && left.candidateId < right.candidateId);
+}
+
+__global__ void initialize_catalog_candidates_kernel(
+    RotatedCandidateRecord* candidates,
+    std::uint32_t candidates_per_group,
+    std::uint32_t seed,
+    int min_axis) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) return;
+    ResidentDeviceRandom random{};
+    random.state = seed;
+    const std::uint32_t count = candidates_per_group * CATALOG_GROUP_COUNT;
+    for (std::uint32_t index = 0; index < count; index++) {
+        RotatedCandidateRecord candidate{};
+        candidate.candidateId = index + 1u;
+        candidate.cx = resident_device_intn(random, 512) * 10000;
+        candidate.cy = resident_device_intn(random, 512) * 10000;
+        candidate.rx = (resident_device_intn(random, 29) + min_axis) * 10000;
+        candidate.ry = (resident_device_intn(random, 29) + min_axis) * 10000;
+        candidate.alpha = 128;
+        candidate.angleDegrees = static_cast<float>(resident_device_next_float(random) * 180.0);
+        candidate.reserved = index / candidates_per_group;
+        candidates[index] = candidate;
+    }
+}
+
+__global__ void initialize_catalog_chains_kernel(
+    const RotatedCandidateRecord* candidates,
+    const ScoreRecord* scores,
+    CatalogDeviceOutput* output,
+    std::uint32_t candidates_per_group,
+    std::uint32_t layer) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) return;
+    for (std::uint32_t group = 0; group < CATALOG_GROUP_COUNT; group++) {
+        const std::uint32_t first = group * candidates_per_group;
+        std::uint32_t best = first;
+        for (std::uint32_t index = first + 1u; index < first + candidates_per_group; index++) {
+            if (catalog_score_better(scores[index], scores[best])) best = index;
+        }
+        ResidentDeviceChain chain{};
+        chain.group = static_cast<int>(group);
+        chain.state = candidates[best];
+        chain.score = scores[best];
+        chain.rng.state = 97531u + layer * 1009u + group * 9176u;
+        chain.remainingAge = CATALOG_AGE;
+        output->chains[group] = chain;
+    }
+}
+
+__device__ RotatedCandidateRecord mutate_catalog_candidate(
+    const ResidentDeviceChain& chain,
+    ResidentDeviceRandom& random,
+    std::uint32_t round,
+    std::uint32_t fan,
+    int min_axis) {
+    RotatedCandidateRecord proposal = chain.state;
+    const int choice = resident_device_intn(random, 4);
+    if (choice == 0) {
+        const int cx = proposal.cx / 10000 + static_cast<int>(trunc(resident_device_normal(random) * 16.0));
+        const int cy = proposal.cy / 10000 + static_cast<int>(trunc(resident_device_normal(random) * 16.0));
+        proposal.cx = resident_device_clamp_int(cx, 0, 511) * 10000;
+        proposal.cy = resident_device_clamp_int(cy, 0, 511) * 10000;
+    } else if (choice == 1) {
+        const int rx = proposal.rx / 10000 + static_cast<int>(trunc(resident_device_normal(random) * 16.0));
+        proposal.rx = resident_device_clamp_int(rx, min_axis, 512) * 10000;
+    } else if (choice == 2) {
+        const int ry = proposal.ry / 10000 + static_cast<int>(trunc(resident_device_normal(random) * 16.0));
+        proposal.ry = resident_device_clamp_int(ry, min_axis, 512) * 10000;
+    } else {
+        const int delta = static_cast<int>(trunc(resident_device_normal(random) * 15.0));
+        const float changed = proposal.angleDegrees + static_cast<float>(delta);
+        proposal.angleDegrees = resident_device_wrap_angle_180(static_cast<double>(changed));
+    }
+    proposal.alpha = resident_device_clamp_int(proposal.alpha + resident_device_intn(random, 21) - 10, 1, 255);
+    const std::uint64_t base = (static_cast<std::uint64_t>(round) * 1000ull + static_cast<std::uint32_t>(chain.group) * CATALOG_FANOUT + fan) * 1000ull;
+    proposal.candidateId = static_cast<std::uint32_t>(base + static_cast<std::uint32_t>(chain.group) + 1u);
+    proposal.reserved = static_cast<std::uint32_t>(chain.group);
+    return proposal;
+}
+
+__global__ void catalog_search_coop_kernel(
+    const std::uint8_t* target,
+    const std::uint8_t* current,
+    const std::uint16_t* weights,
+    CatalogDeviceOutput* output,
+    RotatedCandidateRecord* proposals,
+    ScoreRecord* scores,
+    std::uint32_t* active_flags,
+    std::uint32_t* accepted_flags,
+    int width,
+    int height,
+    std::uint64_t base_total_error,
+    const std::uint8_t* mask,
+    CatalogMaskMetadata metadata,
+    bool weighted,
+    int min_axis) {
+    cg::grid_group grid = cg::this_grid();
+    const std::uint32_t proposal_index = blockIdx.x;
+    const std::uint32_t chain_index = proposal_index / CATALOG_FANOUT;
+    const std::uint32_t fan = proposal_index % CATALOG_FANOUT;
+    const int tid = threadIdx.x;
+
+    __shared__ long long rsum[256];
+    __shared__ long long gsum[256];
+    __shared__ long long bsum[256];
+    __shared__ long long weight_sum[256];
+    __shared__ unsigned long long old_error[256];
+    __shared__ unsigned long long new_error[256];
+    __shared__ int color_r;
+    __shared__ int color_g;
+    __shared__ int color_b;
+
+    for (std::uint32_t round = 1; round <= CATALOG_MAX_HILL_STEPS; round++) {
+        if (tid == 0 && fan == 0) {
+            ResidentDeviceChain chain = output->chains[chain_index];
+            const bool active = chain.remainingAge > 0 && chain.steps < CATALOG_MAX_HILL_STEPS && output->stats.stop == 0;
+            active_flags[chain_index] = active ? 1u : 0u;
+            accepted_flags[chain_index] = 0u;
+            if (active) {
+                for (std::uint32_t index = 0; index < CATALOG_FANOUT; index++) {
+                    proposals[chain_index * CATALOG_FANOUT + index] = mutate_catalog_candidate(chain, chain.rng, round, index, min_axis);
+                }
+                chain.steps++;
+                output->chains[chain_index] = chain;
+            }
+        }
+        grid.sync();
+
+        const bool active = active_flags[chain_index] != 0;
+        RotatedCandidateRecord candidate{};
+        if (active) candidate = proposals[proposal_index];
+        const double theta = static_cast<double>(candidate.angleDegrees) * 0.01745329251994329577;
+        const double cosine = cos(theta);
+        const double sine = sin(theta);
+        const double center_x = static_cast<double>(candidate.cx) / CATALOG_GEOMETRY_SCALE;
+        const double center_y = static_cast<double>(candidate.cy) / CATALOG_GEOMETRY_SCALE;
+        const double rx = static_cast<double>(candidate.rx) / CATALOG_GEOMETRY_SCALE;
+        const double ry = static_cast<double>(candidate.ry) / CATALOG_GEOMETRY_SCALE;
+        const double extent_local_x = max(fabs((2.0 * metadata.minX / metadata.intrinsicWidth - 1.0) * rx), fabs((2.0 * metadata.maxX / metadata.intrinsicWidth - 1.0) * rx));
+        const double extent_local_y = max(fabs((2.0 * metadata.minY / metadata.intrinsicHeight - 1.0) * ry), fabs((2.0 * metadata.maxY / metadata.intrinsicHeight - 1.0) * ry));
+        const int extent_x = static_cast<int>(ceil(fabs(extent_local_x * cosine) + fabs(extent_local_y * sine))) + 1;
+        const int extent_y = static_cast<int>(ceil(fabs(extent_local_x * sine) + fabs(extent_local_y * cosine))) + 1;
+        const int min_x = max(0, static_cast<int>(floor(center_x - extent_x)));
+        const int max_x = min(width - 1, static_cast<int>(ceil(center_x + extent_x)));
+        const int min_y = max(0, static_cast<int>(floor(center_y - extent_y)));
+        const int max_y = min(height - 1, static_cast<int>(ceil(center_y + extent_y)));
+        const int box_width = max_x >= min_x ? max_x - min_x + 1 : 0;
+        const int box_height = max_y >= min_y ? max_y - min_y + 1 : 0;
+        const int pixel_count = active ? box_width * box_height : 0;
+
+        long long local_r = 0;
+        long long local_g = 0;
+        long long local_b = 0;
+        long long local_weight = 0;
+        unsigned long long local_old = 0;
+        const int color_scale = active ? 0x101 * 255 / candidate.alpha : 0;
+        for (int index = tid; index < pixel_count; index += blockDim.x) {
+            const int x = min_x + index % box_width;
+            const int y = min_y + index / box_width;
+            if (!catalog_mask_contains(candidate, x, y, cosine, sine, mask, metadata)) continue;
+            const int pixel = y * width + x;
+            const int offset = pixel * 4;
+            const int weight = weighted ? weights[pixel] : 256;
+            const int tr = target[offset + 0];
+            const int tg = target[offset + 1];
+            const int tb = target[offset + 2];
+            const int ta = target[offset + 3];
+            const int cr = current[offset + 0];
+            const int cg = current[offset + 1];
+            const int cb = current[offset + 2];
+            const int ca = current[offset + 3];
+            const int dr = tr - cr;
+            const int dg = tg - cg;
+            const int db = tb - cb;
+            const int da = ta - ca;
+            local_r += static_cast<long long>(((tr - cr) * color_scale + cr * 0x101) * weight);
+            local_g += static_cast<long long>(((tg - cg) * color_scale + cg * 0x101) * weight);
+            local_b += static_cast<long long>(((tb - cb) * color_scale + cb * 0x101) * weight);
+            local_old += static_cast<unsigned long long>(dr * dr + dg * dg + db * db + da * da) * weight / 256;
+            local_weight += weight;
+        }
+        rsum[tid] = local_r;
+        gsum[tid] = local_g;
+        bsum[tid] = local_b;
+        weight_sum[tid] = local_weight;
+        old_error[tid] = local_old;
+        __syncthreads();
+        for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+            if (tid < stride) {
+                rsum[tid] += rsum[tid + stride];
+                gsum[tid] += gsum[tid + stride];
+                bsum[tid] += bsum[tid + stride];
+                weight_sum[tid] += weight_sum[tid + stride];
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            color_r = weight_sum[0] == 0 ? 0 : clamp_channel(static_cast<int>(rsum[0] / weight_sum[0]) >> 8);
+            color_g = weight_sum[0] == 0 ? 0 : clamp_channel(static_cast<int>(gsum[0] / weight_sum[0]) >> 8);
+            color_b = weight_sum[0] == 0 ? 0 : clamp_channel(static_cast<int>(bsum[0] / weight_sum[0]) >> 8);
+        }
+        __syncthreads();
+
+        const unsigned int maximum = 0xffff;
+        const unsigned int mask_alpha = 0xffff;
+        const unsigned int alpha16 = active ? static_cast<unsigned int>(candidate.alpha) * 0x101 : 0u;
+        const unsigned int blend = (maximum - alpha16 * mask_alpha / maximum) * 0x101;
+        const unsigned int sr = static_cast<unsigned int>((static_cast<unsigned long long>(color_r) * 0x101 * candidate.alpha) / 255);
+        const unsigned int sg = static_cast<unsigned int>((static_cast<unsigned long long>(color_g) * 0x101 * candidate.alpha) / 255);
+        const unsigned int sb = static_cast<unsigned int>((static_cast<unsigned long long>(color_b) * 0x101 * candidate.alpha) / 255);
+        unsigned long long local_new = 0;
+        for (int index = tid; index < pixel_count; index += blockDim.x) {
+            const int x = min_x + index % box_width;
+            const int y = min_y + index / box_width;
+            if (!catalog_mask_contains(candidate, x, y, cosine, sine, mask, metadata)) continue;
+            const int pixel = y * width + x;
+            const int offset = pixel * 4;
+            const unsigned long long weight = weighted ? weights[pixel] : 256ull;
+            const int tr = target[offset + 0];
+            const int tg = target[offset + 1];
+            const int tb = target[offset + 2];
+            const int ta = target[offset + 3];
+            const int br = current[offset + 0];
+            const int bg = current[offset + 1];
+            const int bb = current[offset + 2];
+            const int ba = current[offset + 3];
+            const int ar = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(br) * blend + static_cast<unsigned long long>(sr) * mask_alpha) / maximum) >> 8));
+            const int ag = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(bg) * blend + static_cast<unsigned long long>(sg) * mask_alpha) / maximum) >> 8));
+            const int ab = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(bb) * blend + static_cast<unsigned long long>(sb) * mask_alpha) / maximum) >> 8));
+            const int aa = static_cast<int>(static_cast<std::uint8_t>(((static_cast<unsigned long long>(ba) * blend + static_cast<unsigned long long>(alpha16) * mask_alpha) / maximum) >> 8));
+            const int dr = tr - ar;
+            const int dg = tg - ag;
+            const int db = tb - ab;
+            const int da = ta - aa;
+            local_new += static_cast<unsigned long long>(dr * dr + dg * dg + db * db + da * da) * weight / 256;
+        }
+        new_error[tid] = local_new;
+        __syncthreads();
+        for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+            if (tid < stride) {
+                old_error[tid] += old_error[tid + stride];
+                new_error[tid] += new_error[tid + stride];
+            }
+            __syncthreads();
+        }
+        if (tid == 0 && active) {
+            ScoreRecord score{};
+            score.candidateId = candidate.candidateId;
+            score.r = static_cast<std::uint8_t>(color_r);
+            score.g = static_cast<std::uint8_t>(color_g);
+            score.b = static_cast<std::uint8_t>(color_b);
+            score.a = static_cast<std::uint8_t>(candidate.alpha);
+            score.oldErrorDelta = old_error[0];
+            score.newErrorDelta = new_error[0];
+            const double total = static_cast<double>(base_total_error - old_error[0] + new_error[0]);
+            score.energy = sqrt(total / static_cast<double>(width * height * 4)) / 255.0;
+            scores[proposal_index] = score;
+        }
+        grid.sync();
+
+        if (tid == 0 && fan == 0 && active) {
+            ResidentDeviceChain chain = output->chains[chain_index];
+            const std::uint32_t first = chain_index * CATALOG_FANOUT;
+            const std::uint32_t end = first + CATALOG_FANOUT;
+            std::uint32_t best = first;
+            for (std::uint32_t index = first + 1u; index < end; index++) {
+                if (catalog_score_better(scores[index], scores[best])) best = index;
+            }
+            if (catalog_score_better(scores[best], chain.score)) {
+                chain.state = proposals[best];
+                chain.score = scores[best];
+                chain.remainingAge = CATALOG_AGE;
+                accepted_flags[chain_index] = 1u;
+            } else {
+                chain.remainingAge--;
+            }
+            output->chains[chain_index] = chain;
+        }
+        grid.sync();
+
+        if (blockIdx.x == 0 && tid == 0) {
+            std::uint32_t active_count = 0;
+            std::uint32_t accepted_count = 0;
+            for (std::uint32_t index = 0; index < CATALOG_GROUP_COUNT; index++) {
+                active_count += active_flags[index];
+                accepted_count += accepted_flags[index];
+            }
+            output->stats.rounds++;
+            output->stats.proposalScores += active_count * CATALOG_FANOUT;
+            output->stats.acceptedMutations += accepted_count;
+            output->stats.roundsWithoutAccept = accepted_count == 0 ? output->stats.roundsWithoutAccept + 1u : 0u;
+            if (output->stats.roundsWithoutAccept >= CATALOG_EARLY_STOP_ROUNDS) {
+                output->stats.earlyStop = 1u;
+                output->stats.stop = 1u;
+            } else {
+                bool any_next = false;
+                for (std::uint32_t index = 0; index < CATALOG_GROUP_COUNT; index++) {
+                    const ResidentDeviceChain& chain = output->chains[index];
+                    if (chain.remainingAge > 0 && chain.steps < CATALOG_MAX_HILL_STEPS) any_next = true;
+                }
+                if (!any_next) output->stats.stop = 1u;
+            }
+        }
+        grid.sync();
+        if (output->stats.stop != 0) return;
     }
 }
 
@@ -2760,6 +3090,161 @@ static void server_score_resident_catalog_batches(ServerState& state) {
     write_stdout_value(elapsed_ms(d2h_start, d2h_end));
     write_stdout_value(elapsed_ms(total_start, std::chrono::steady_clock::now()));
     write_stdout_bytes(scores.data(), scores.size() * sizeof(ScoreRecord));
+    std::cout.flush();
+}
+
+static void server_select_resident_catalog(ServerState& state) {
+    if (!state.d_target || !state.d_current || state.residentCatalogAtlases.empty() || !state.d_resident_catalog_masks) {
+        throw std::runtime_error("SELECT_RESIDENT_CATALOG before INIT/SET_CATALOG_ATLASES");
+    }
+    std::uint32_t weighted = 0;
+    std::uint32_t identity_count = 0;
+    std::uint32_t candidates_per_group = 0;
+    std::uint32_t layer = 0;
+    std::uint32_t min_axis = 0;
+    std::uint32_t base_seed = 0;
+    if (!read_stdin_value(weighted) || !read_stdin_value(identity_count) || !read_stdin_value(candidates_per_group) ||
+        !read_stdin_value(layer) || !read_stdin_value(min_axis) || !read_stdin_value(base_seed) ||
+        weighted > 1 || identity_count == 0 || identity_count > state.residentCatalogAtlases.size() ||
+        candidates_per_group == 0 || candidates_per_group > 13750 || layer == 0 || layer > 10000 ||
+        min_axis == 0 || min_axis > 4096 || (weighted != 0 && !state.d_weights)) {
+        throw std::runtime_error("invalid SELECT_RESIDENT_CATALOG header");
+    }
+    const std::size_t initial_count = static_cast<std::size_t>(candidates_per_group) * CATALOG_GROUP_COUNT;
+    const std::size_t total_initial_count = initial_count * identity_count;
+    const std::size_t candidate_stride = max(initial_count, static_cast<std::size_t>(CATALOG_GROUP_COUNT * CATALOG_FANOUT));
+    const std::size_t total_candidate_capacity = candidate_stride * identity_count;
+    if (initial_count > 220000 || total_initial_count > 880000) {
+        throw std::runtime_error("SELECT_RESIDENT_CATALOG candidate count exceeds production bounds");
+    }
+
+    cudaDeviceProp prop{};
+    require_cuda(cudaGetDeviceProperties(&prop, 0), "catalog selection cudaGetDeviceProperties");
+    if (!prop.cooperativeLaunch) throw std::runtime_error("catalog selection requires cooperativeLaunch support");
+    int blocks_per_sm = 0;
+    require_cuda(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm, catalog_search_coop_kernel, 256, 0), "catalog selection occupancy");
+    const std::size_t search_blocks = CATALOG_GROUP_COUNT * CATALOG_FANOUT;
+    if (search_blocks > static_cast<std::size_t>(blocks_per_sm) * prop.multiProcessorCount) {
+        throw std::runtime_error("catalog selection cooperative grid is too large");
+    }
+
+    CatalogDeviceOutput* d_outputs = nullptr;
+    RotatedCandidateRecord* d_candidates = nullptr;
+    ScoreRecord* d_scores = nullptr;
+    std::uint32_t* d_active_flags = nullptr;
+    std::uint32_t* d_accepted_flags = nullptr;
+    std::vector<CatalogDeviceOutput> outputs(identity_count);
+    const auto total_start = std::chrono::steady_clock::now();
+    try {
+        require_cuda(cudaMalloc(&d_outputs, identity_count * sizeof(CatalogDeviceOutput)), "catalog selection cudaMalloc outputs");
+        require_cuda(cudaMalloc(&d_candidates, total_candidate_capacity * sizeof(RotatedCandidateRecord)), "catalog selection cudaMalloc candidates");
+        require_cuda(cudaMalloc(&d_scores, total_candidate_capacity * sizeof(ScoreRecord)), "catalog selection cudaMalloc scores");
+        require_cuda(cudaMalloc(&d_active_flags, identity_count * CATALOG_GROUP_COUNT * sizeof(std::uint32_t)), "catalog selection cudaMalloc active flags");
+        require_cuda(cudaMalloc(&d_accepted_flags, identity_count * CATALOG_GROUP_COUNT * sizeof(std::uint32_t)), "catalog selection cudaMalloc accepted flags");
+        require_cuda(cudaMemset(d_outputs, 0, identity_count * sizeof(CatalogDeviceOutput)), "catalog selection cudaMemset outputs");
+
+        for (std::uint32_t identity = 0; identity < identity_count; identity++) {
+            const ResidentCatalogAtlas& atlas = state.residentCatalogAtlases[identity];
+            CatalogDeviceOutput* identity_output = d_outputs + identity;
+            RotatedCandidateRecord* identity_candidates = d_candidates + static_cast<std::size_t>(identity) * candidate_stride;
+            ScoreRecord* identity_scores = d_scores + static_cast<std::size_t>(identity) * candidate_stride;
+            std::uint32_t* identity_active_flags = d_active_flags + identity * CATALOG_GROUP_COUNT;
+            std::uint32_t* identity_accepted_flags = d_accepted_flags + identity * CATALOG_GROUP_COUNT;
+            const std::uint32_t identity_seed = base_seed + (identity + 1u) * 2000003u;
+            initialize_catalog_candidates_kernel<<<1, 1>>>(identity_candidates, candidates_per_group, identity_seed, static_cast<int>(min_axis));
+            require_cuda(cudaGetLastError(), "initialize_catalog_candidates_kernel launch");
+            score_batch_catalog_geometry_kernel<<<static_cast<unsigned int>(initial_count), 256>>>(
+                state.d_target,
+                state.d_current,
+                weighted != 0 ? state.d_weights : nullptr,
+                identity_candidates,
+                identity_scores,
+                state.metadata.width,
+                state.metadata.height,
+                state.metadata.baseTotalError,
+                state.d_resident_catalog_masks + atlas.offset,
+                atlas.metadata);
+            require_cuda(cudaGetLastError(), "catalog selection initial score launch");
+            initialize_catalog_chains_kernel<<<1, 1>>>(identity_candidates, identity_scores, identity_output, candidates_per_group, layer);
+            require_cuda(cudaGetLastError(), "initialize_catalog_chains_kernel launch");
+
+            const std::uint8_t* identity_mask = state.d_resident_catalog_masks + atlas.offset;
+            int width = state.metadata.width;
+            int height = state.metadata.height;
+            std::uint64_t base_total_error = state.metadata.baseTotalError;
+            CatalogMaskMetadata metadata = atlas.metadata;
+            bool weighted_value = weighted != 0;
+            int min_axis_value = static_cast<int>(min_axis);
+            void* kernel_args[] = {
+                &state.d_target,
+                &state.d_current,
+                &state.d_weights,
+                &identity_output,
+                &identity_candidates,
+                &identity_scores,
+                &identity_active_flags,
+                &identity_accepted_flags,
+                &width,
+                &height,
+                &base_total_error,
+                &identity_mask,
+                &metadata,
+                &weighted_value,
+                &min_axis_value,
+            };
+            require_cuda(cudaLaunchCooperativeKernel(
+                reinterpret_cast<void*>(catalog_search_coop_kernel),
+                static_cast<unsigned int>(search_blocks),
+                256,
+                kernel_args),
+                "catalog_search_coop_kernel launch");
+        }
+        require_cuda(cudaMemcpy(outputs.data(), d_outputs, outputs.size() * sizeof(CatalogDeviceOutput), cudaMemcpyDeviceToHost), "catalog selection cudaMemcpy outputs");
+    } catch (...) {
+        cudaFree(d_outputs);
+        cudaFree(d_candidates);
+        cudaFree(d_scores);
+        cudaFree(d_active_flags);
+        cudaFree(d_accepted_flags);
+        throw;
+    }
+    cudaFree(d_outputs);
+    cudaFree(d_candidates);
+    cudaFree(d_scores);
+    cudaFree(d_active_flags);
+    cudaFree(d_accepted_flags);
+
+    std::uint32_t proposal_scores = 0;
+    std::uint32_t accepted_mutations = 0;
+    std::uint32_t rounds = 0;
+    std::uint32_t early_stop_identities = 0;
+    for (const CatalogDeviceOutput& output : outputs) {
+        proposal_scores += output.stats.proposalScores;
+        accepted_mutations += output.stats.acceptedMutations;
+        rounds += output.stats.rounds;
+        early_stop_identities += output.stats.earlyStop;
+    }
+    const std::uint32_t status = 0;
+    const std::uint32_t finalist_count = identity_count * CATALOG_GROUP_COUNT;
+    const std::uint32_t initial_candidate_count = static_cast<std::uint32_t>(total_initial_count);
+    const std::uint32_t kernel_count = identity_count * 4u;
+    write_stdout_value(status);
+    write_stdout_value(identity_count);
+    write_stdout_value(finalist_count);
+    write_stdout_value(initial_candidate_count);
+    write_stdout_value(proposal_scores);
+    write_stdout_value(accepted_mutations);
+    write_stdout_value(rounds);
+    write_stdout_value(early_stop_identities);
+    write_stdout_value(kernel_count);
+    write_stdout_value(elapsed_ms(total_start, std::chrono::steady_clock::now()));
+    for (std::uint32_t identity = 0; identity < identity_count; identity++) {
+        for (std::uint32_t group = 0; group < CATALOG_GROUP_COUNT; group++) {
+            write_stdout_value(identity);
+            write_stdout_value(outputs[identity].chains[group].state);
+            write_stdout_value(outputs[identity].chains[group].score);
+        }
+    }
     std::cout.flush();
 }
 
@@ -4462,6 +4947,8 @@ static int run_server() {
             server_set_catalog_atlases(state);
         } else if (command == CMD_SCORE_RESIDENT_CATALOG_BATCHES) {
             server_score_resident_catalog_batches(state);
+        } else if (command == CMD_SELECT_RESIDENT_CATALOG) {
+            server_select_resident_catalog(state);
         } else if (command == CMD_UPDATE_CURRENT) {
             server_update_current(state);
         } else if (command == CMD_SHUTDOWN) {

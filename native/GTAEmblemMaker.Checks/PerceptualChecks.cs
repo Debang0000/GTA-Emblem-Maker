@@ -70,6 +70,24 @@ namespace GTAEmblemMaker.Checks
             }
         }
 
+        internal static void CheckNativeEdgeBackend(FitProfile profile)
+        {
+            var config = profile.Stages[0].PerceptualRerank;
+            Check.Equal("native-edge-detail", config.Backend, "catalog accepted perceptual backend");
+            const int size = 3;
+            var candidate = new byte[size * size * 4];
+            var target = new byte[candidate.Length];
+            var right = (1 * size + 2) * 4;
+            target[right] = target[right + 1] = target[right + 2] = 255;
+            var items = new[] { new PerceptualBatchItem("edge", "tile") };
+            using (var client = PerceptualClient.Start(null, config, CancellationToken.None))
+            {
+                Check.Equal("native-edge-detail", client.BackendName, "catalog runtime perceptual backend");
+                var scores = client.ScoreBatchAsync(items, new[] { candidate }, new[] { target }, size, size, CancellationToken.None).GetAwaiter().GetResult();
+                Check.True(Math.Abs(0.35 - scores[0].Score) < 1e-12, "native edge accepted scorer formula");
+            }
+        }
+
         private static void CheckReranker(PerceptualClient client, PerceptualRerank config)
         {
             Check.True(config.FirstRerankLayer > 1, "perceptual schedule has a pre-rerank phase");

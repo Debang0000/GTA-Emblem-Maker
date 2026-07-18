@@ -93,14 +93,18 @@ namespace GTAEmblemMaker.Core
         public string Name { get; private set; }
         public double Width { get; private set; }
         public double Height { get; private set; }
+        public string WidthText { get; private set; }
+        public string HeightText { get; private set; }
         public string Path { get; private set; }
 
-        public ShapeDefinition(string slug, string name, double width, double height, string path)
+        public ShapeDefinition(string slug, string name, double width, double height, string path, string widthText = null, string heightText = null)
         {
             Slug = slug;
             Name = name;
             Width = width;
             Height = height;
+            WidthText = widthText;
+            HeightText = heightText;
             Path = path;
         }
     }
@@ -121,11 +125,17 @@ namespace GTAEmblemMaker.Core
 
         internal static ExportShape ToExportShape(ShapeState state)
         {
+            return ToExportShape(state, (int)MinEllipseAxis);
+        }
+
+        internal static ExportShape ToExportShape(ShapeState state, int minAxis)
+        {
             ShapeDefinition definition;
             var usesIntrinsicAnchor = OfficialCatalog.TryGetDefinition(state.Shape, out definition);
             if (!usesIntrinsicAnchor) definition = DefinitionFor(state.Shape);
-            var rx = usesIntrinsicAnchor ? state.Rx : Math.Max(state.Rx, MinEllipseAxis);
-            var ry = usesIntrinsicAnchor ? state.Ry : Math.Max(state.Ry, MinEllipseAxis);
+            var safeAxis = Math.Max(0, minAxis);
+            var rx = Math.Max(state.Rx, safeAxis);
+            var ry = Math.Max(state.Ry, safeAxis);
             var alpha = state.Alpha;
             if (definition == Round01 && (rx != state.Rx || ry != state.Ry))
             {
