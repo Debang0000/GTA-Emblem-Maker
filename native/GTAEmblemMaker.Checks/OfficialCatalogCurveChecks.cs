@@ -99,7 +99,7 @@ namespace GTAEmblemMaker.Checks
             var acceptedSubFour = new ShapeState("catalog-curve-01", 419, 448, 2, 2, 0, 0, 0, 170, 22.763635635375977);
             var acceptedSubFourPayload = RockstarExporter.Build(new[] { acceptedSubFour }, true, 255, 255, 255, 1700000000000, true, 2);
             Check.True(
-                acceptedSubFourPayload.Svg.Contains("transform=\"matrix(0.0123,0.0052,-0.0591,0.1409,417.9296,445.3819)\""),
+                acceptedSubFourPayload.Svg.Contains("transform=\"matrix(0.0123,0.0052,-0.0595,0.1419,417.9296,445.3819)\""),
                 "catalog sub-four axes preserve accepted exact matrix");
 
             CheckProductionPreviewPreservesLegacyRotation();

@@ -131,7 +131,7 @@ namespace GTAEmblemMaker.Core
         internal static ExportShape ToExportShape(ShapeState state, int minAxis)
         {
             ShapeDefinition definition;
-            var usesIntrinsicAnchor = OfficialCatalog.TryGetDefinition(state.Shape, out definition);
+            var usesIntrinsicAnchor = OfficialCatalog.TryGetExportDefinition(state.Shape, out definition);
             if (!usesIntrinsicAnchor) definition = DefinitionFor(state.Shape);
             var safeAxis = Math.Max(0, minAxis);
             var rx = Math.Max(state.Rx, safeAxis);
