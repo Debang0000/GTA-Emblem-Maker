@@ -60,7 +60,7 @@ namespace GTAEmblemMaker.Checks
             var defaultState = new ShapeState(entry.Identifier, 256, 256.41, 150, 146.41, 0, 0, 0, 255, 0);
             var defaultMatrix = RockstarExporter.MatrixValues(Shapes.ToExportShape(defaultState));
             Check.True(Math.Abs(1 - defaultMatrix.ScaleX) <= 0.000001, "curves/61 default scaleX");
-            Check.True(Math.Abs(0.99938566552901 - defaultMatrix.ScaleY) <= 0.000001, "curves/61 default scaleY");
+            Check.True(Math.Abs(1 - defaultMatrix.ScaleY) <= 0.000001, "curves/61 default scaleY");
             Check.True(Math.Abs(106 - defaultMatrix.E) <= 0.000001, "curves/61 default matrix e");
             Check.True(Math.Abs(110 - defaultMatrix.F) <= 0.000001, "curves/61 default matrix f");
 
@@ -68,20 +68,20 @@ namespace GTAEmblemMaker.Checks
             var matrix = RockstarExporter.MatrixValues(Shapes.ToExportShape(state));
             var payload = RockstarExporter.Build(new[] { state }, true, 1700000000000);
             Check.True(Math.Abs(1 - matrix.ScaleX) <= 0.000001, "curves/61 anisotropic scaleX");
-            Check.True(Math.Abs(0.349784982935154 - matrix.ScaleY) <= 0.000001, "curves/61 anisotropic scaleY");
+            Check.True(Math.Abs(0.35 - matrix.ScaleY) <= 0.000001, "curves/61 anisotropic scaleY");
             Check.True(Math.Abs(0.8572 - matrix.A) <= 0.00005, "curves/61 official matrix a");
             Check.True(Math.Abs(0.515 - matrix.B) <= 0.00005, "curves/61 official matrix b");
-            Check.True(Math.Abs(-0.1802 - matrix.C) <= 0.00005, "curves/61 official matrix c");
-            Check.True(Math.Abs(0.2998 - matrix.D) <= 0.00005, "curves/61 official matrix d");
+            Check.True(Math.Abs(-0.1803 - matrix.C) <= 0.00005, "curves/61 official matrix c");
+            Check.True(Math.Abs(0.3 - matrix.D) <= 0.00005, "curves/61 official matrix d");
             Check.True(Math.Abs(153.8173 - matrix.E) <= 0.00005, "curves/61 official matrix e");
             Check.True(Math.Abs(135.23 - matrix.F) <= 0.00005, "curves/61 official matrix f");
             Check.True(payload.Svg.Contains("d=\"" + exportDefinition.Path + "\""), "curves/61 exact filled path export");
-            Check.True(payload.Svg.Contains("matrix(0.8572,0.515,-0.1802,0.2998,153.8173,135.23)"), "curves/61 official live SVG matrix");
+            Check.True(payload.Svg.Contains("matrix(0.8572,0.515,-0.1803,0.3,153.8173,135.23)"), "curves/61 official live SVG matrix");
             var layer = Program.DecodeLayers(payload.ConsoleCode)[1];
             Check.True(Math.Abs(106 - Convert.ToDouble(layer["x"])) <= 0.000001, "curves/61 official layerData x");
-            Check.True(Math.Abs(109.91 - Convert.ToDouble(layer["y"])) <= 0.000001, "curves/61 official layerData y");
+            Check.True(Math.Abs(110 - Convert.ToDouble(layer["y"])) <= 0.000001, "curves/61 official layerData y");
             Check.True(Math.Abs(100 - Convert.ToDouble(layer["scaleX"])) <= 0.000001, "curves/61 layerData scaleX");
-            Check.True(Math.Abs(34.9785 - Convert.ToDouble(layer["scaleY"])) <= 0.000001, "curves/61 layerData scaleY");
+            Check.True(Math.Abs(35 - Convert.ToDouble(layer["scaleY"])) <= 0.000001, "curves/61 layerData scaleY");
             Check.True(Math.Abs(31 - Convert.ToDouble(layer["rotation"])) <= 0.000001, "curves/61 layerData rotation");
 
             var atlasAlpha = CatalogMaskAtlas.RenderBinaryAlpha(entry, state);

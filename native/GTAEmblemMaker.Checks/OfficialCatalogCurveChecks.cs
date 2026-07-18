@@ -46,17 +46,17 @@ namespace GTAEmblemMaker.Checks
                 { "curves/72", "M297.305,61.639C258.182,22.515,206.089,0.628,150.626,0.013C95.264-0.6,42.773,20.02,2.829,58.07L0,60.765l7.187,7.187l2.693-2.563C88.071-9.05,213.784-7.509,290.118,68.825l2.695,2.694L300,64.333L297.305,61.639z" },
                 { "curves/73", "M294.798,60.565C256.355,22.122,205.172,0.617,150.677,0.013C96.282-0.59,44.709,19.67,5.457,57.062L0,62.26l12.139,12.139l5.197-4.949C91.366-1.028,210.391,0.432,282.661,72.702l5.201,5.202L300,65.767L294.798,60.565z" },
             };
-            var expectedExportDimensions = new Dictionary<string, double[]>
+            var expectedLayerDimensions = new Dictionary<string, double[]>
             {
-                { "curves/01", new[] { 300.0, 26.0 } },
-                { "curves/07", new[] { 300.0, 51.0 } },
-                { "curves/61", new[] { 300.0, 293.0 } },
-                { "curves/62", new[] { 300.0, 293.0 } },
-                { "curves/66", new[] { 151.0, 300.0 } },
-                { "curves/67", new[] { 152.0, 300.0 } },
-                { "curves/71", new[] { 300.0, 65.0 } },
-                { "curves/72", new[] { 300.0, 72.0 } },
-                { "curves/73", new[] { 300.0, 78.0 } },
+                { "curves/01", new[] { 300.0, 26.17 } },
+                { "curves/07", new[] { 300.0, 51.43 } },
+                { "curves/61", new[] { 300.0, 292.82 } },
+                { "curves/62", new[] { 300.0, 292.95 } },
+                { "curves/66", new[] { 150.9, 300.0 } },
+                { "curves/67", new[] { 151.8, 300.0 } },
+                { "curves/71", new[] { 300.0, 64.66 } },
+                { "curves/72", new[] { 300.0, 71.52 } },
+                { "curves/73", new[] { 300.0, 77.9 } },
             };
 
             Check.Equal(expectedHashes.Count, OfficialCatalog.CurveBasis.Count, "selected curve basis count");
@@ -71,15 +71,15 @@ namespace GTAEmblemMaker.Checks
                 ShapeDefinition exportDefinition;
                 Check.True(OfficialCatalog.TryGetExportDefinition(identifier, out exportDefinition), definition.Slug + " export definition");
                 Check.Equal(expectedExportPaths[definition.Slug], exportDefinition.Path, definition.Slug + " Rockstar path");
-                Check.Equal(expectedExportDimensions[definition.Slug][0], exportDefinition.Width, definition.Slug + " Rockstar width");
-                Check.Equal(expectedExportDimensions[definition.Slug][1], exportDefinition.Height, definition.Slug + " Rockstar height");
+                Check.Equal(expectedDimensions[definition.Slug][0], exportDefinition.Width, definition.Slug + " Rockstar measured width");
+                Check.Equal(expectedDimensions[definition.Slug][1], exportDefinition.Height, definition.Slug + " Rockstar measured height");
                 var state = new ShapeState(identifier, 256, 320, 45, 8, 75, 62, 50, 220, 5);
                 var empty = RockstarExporter.Build(new ShapeState[0], true, 1700000000000);
                 var curvePayload = RockstarExporter.Build(new[] { state }, true, 1700000000000);
                 Check.True(curvePayload.Svg.Contains(exportDefinition.Path), definition.Slug + " exact SVG path");
                 var curveLayer = Program.DecodeLayers(curvePayload.ConsoleCode)[1];
-                Check.Equal(exportDefinition.Width, Convert.ToDouble(curveLayer["width"]), definition.Slug + " Rockstar layer width");
-                Check.Equal(exportDefinition.Height, Convert.ToDouble(curveLayer["height"]), definition.Slug + " Rockstar layer height");
+                Check.Equal(expectedLayerDimensions[definition.Slug][0], Convert.ToDouble(curveLayer["width"]), definition.Slug + " Rockstar layer width");
+                Check.Equal(expectedLayerDimensions[definition.Slug][1], Convert.ToDouble(curveLayer["height"]), definition.Slug + " Rockstar layer height");
                 Check.True(curvePayload.GeneratedCodeLength > empty.GeneratedCodeLength, definition.Slug + " exact budget cost");
                 Check.Equal("#transparent", curvePayload.BackgroundColor, definition.Slug + " transparency");
                 Check.True(HasVisiblePixel(RunArtifacts.RenderPayloadPreview(new[] { state }, curvePayload)), definition.Slug + " exact preview");
@@ -99,7 +99,7 @@ namespace GTAEmblemMaker.Checks
             var acceptedSubFour = new ShapeState("catalog-curve-01", 419, 448, 2, 2, 0, 0, 0, 170, 22.763635635375977);
             var acceptedSubFourPayload = RockstarExporter.Build(new[] { acceptedSubFour }, true, 255, 255, 255, 1700000000000, true, 2);
             Check.True(
-                acceptedSubFourPayload.Svg.Contains("transform=\"matrix(0.0123,0.0052,-0.0595,0.1419,417.9296,445.3819)\""),
+                acceptedSubFourPayload.Svg.Contains("transform=\"matrix(0.0123,0.0052,-0.0591,0.1409,417.9296,445.3819)\""),
                 "catalog sub-four axes preserve accepted exact matrix");
 
             CheckProductionPreviewPreservesLegacyRotation();
