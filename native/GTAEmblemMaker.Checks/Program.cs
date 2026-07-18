@@ -72,23 +72,23 @@ namespace GTAEmblemMaker.Checks
             Check.Equal("1.1.2", EngineInfo.Version, "engine version");
 
             var catalog = ProfileCatalog.Load(ProfileFolder());
-            Check.Equal(4, catalog.Profiles.Count, "production profile count");
-            Check.Equal("v1-best-quality", catalog.Default.Id, "default profile");
-            Check.Equal("Best Quality", catalog.Default.DisplayName, "default profile display name");
+            Check.Equal(3, catalog.Profiles.Count, "production profile count");
+            Check.Equal("v1-beam-clean", catalog.Default.Id, "default profile");
+            Check.Equal("Beam Clean", catalog.Default.DisplayName, "default profile display name");
             foreach (var profile in catalog.Profiles)
             {
                 foreach (var stage in profile.Stages) Check.Equal(1270000, stage.Budget, profile.Id + " production budget");
                 if (profile.Id == "v1-catalog-quality") Check.Equal("1.1.2", profile.MinimumEngineVersion, "catalog minimum engine version");
             }
-            Check.Equal("beam-pair", catalog.Default.Pipeline.Runner, "default pipeline runner");
+            Check.Equal("beam", catalog.Default.Pipeline.Runner, "default pipeline runner");
 
-            var validProfile = File.ReadAllText(Path.Combine(ProfileFolder(), "v1-best-quality.json"));
+            var validProfile = File.ReadAllText(Path.Combine(ProfileFolder(), "v1-beam-clean.json"));
             RejectProfile("{\"unknown\":true}", "unknown top-level field");
-            RejectProfile(validProfile.Replace("  \"displayName\": \"Best Quality\",\r\n", "").Replace("  \"displayName\": \"Best Quality\",\n", ""), "missing display name");
+            RejectProfile(validProfile.Replace("  \"displayName\": \"Beam Clean\",\r\n", "").Replace("  \"displayName\": \"Beam Clean\",\n", ""), "missing display name");
             RejectProfile(validProfile.Replace("\"displayName\"", "\"displayLabel\""), "unknown display name field");
             RejectProfile(validProfile.Replace("\"id\": \"current-image-fit\",", "\"id\": \"current-image-fit\", \"unknownStageField\": true,"), "unknown stage field");
             RejectProfile(validProfile.Replace("\"beamWidth\": 2", "\"beamWidth\": 0"), "invalid beam width");
-            RejectProfile(validProfile.Replace("\"runner\": \"beam-pair\"", "\"runner\": \"unknown\""), "unknown pipeline runner");
+            RejectProfile(validProfile.Replace("\"runner\": \"beam\"", "\"runner\": \"unknown\""), "unknown pipeline runner");
 
             CheckImages();
             CheckRockstarExport();
@@ -101,22 +101,15 @@ namespace GTAEmblemMaker.Checks
             FitMathChecks.Run(catalog.Default);
             CudaProtocolChecks.Run();
             PerceptualChecks.Run(catalog.Default);
-            FitProfile bestQualityProfile = null;
             FitProfile beamCleanProfile = null;
             FitProfile perceptualProfile = null;
             FitProfile catalogProfile = null;
             for (var profileIndex = 0; profileIndex < catalog.Profiles.Count; profileIndex++)
             {
-                if (catalog.Profiles[profileIndex].Id == "v1-best-quality") bestQualityProfile = catalog.Profiles[profileIndex];
                 if (catalog.Profiles[profileIndex].Id == "v1-beam-clean") beamCleanProfile = catalog.Profiles[profileIndex];
                 if (catalog.Profiles[profileIndex].Id == "v1-perceptual") perceptualProfile = catalog.Profiles[profileIndex];
                 if (catalog.Profiles[profileIndex].Id == "v1-catalog-quality") catalogProfile = catalog.Profiles[profileIndex];
             }
-            Check.True(bestQualityProfile != null, "best quality profile available");
-            Check.Equal("beam-pair", bestQualityProfile.Pipeline.Runner, "best quality runner");
-            Check.Equal(2, bestQualityProfile.Pipeline.BeamWidth, "best quality beam width");
-            Check.Equal(2, bestQualityProfile.Pipeline.ExactRounds, "best quality exact rounds");
-            Check.Equal(2, bestQualityProfile.Pipeline.PairCandidates, "best quality pair candidates");
             Check.True(beamCleanProfile != null, "beam clean profile available");
             Check.Equal("beam", beamCleanProfile.Pipeline.Runner, "beam clean runner");
             Check.Equal(2, beamCleanProfile.Pipeline.BranchFactor, "beam clean branch factor");
@@ -130,7 +123,7 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(1001, catalogProfile.Stages[0].PerceptualRerank.FirstRerankLayer, "official catalog perceptual boundary");
             PerceptualChecks.CheckNativeEdgeBackend(catalogProfile);
             CatalogSearchChecks.CheckPerceptualPool(catalogProfile);
-            FittingEngineChecks.Run(perceptualProfile, beamCleanProfile, bestQualityProfile);
+            FittingEngineChecks.Run(perceptualProfile, beamCleanProfile);
         }
 
         private static string ToHex(byte[] bytes)

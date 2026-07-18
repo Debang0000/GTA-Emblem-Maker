@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 190" width="840" height="190" role="img" aria-labelledby="title">
+  <title id="title">Four-step emblem workflow</title>
+  <rect width="840" height="190" rx="16" fill="#09120f"/>
+  <path d="M105 78H735" stroke="#285b45" stroke-width="2" stroke-dasharray="5 8"><animate attributeName="stroke-dashoffset" values="26;0" dur="2s" repeatCount="indefinite"/></path>
+  <g font-family="'Segoe UI', Arial, sans-serif" text-anchor="middle">
+    <g transform="translate(105 78)"><circle r="31" fill="#12251e" stroke="#19c37d" stroke-width="2"/><text y="7" fill="#7fffc2" font-size="20" font-weight="800">01</text><text y="64" fill="#eef6f2" font-size="15" font-weight="700">NORMALIZE</text><text y="85" fill="#91a89d" font-size="12">512 × 512 RGBA</text></g>
+    <g transform="translate(315 78)"><circle r="31" fill="#12251e" stroke="#19c37d" stroke-width="2"/><text y="7" fill="#7fffc2" font-size="20" font-weight="800">02</text><text y="64" fill="#eef6f2" font-size="15" font-weight="700">FIT</text><text y="85" fill="#91a89d" font-size="12">CUDA layer search</text></g>
+    <g transform="translate(525 78)"><circle r="31" fill="#221e10" stroke="#d99b2b" stroke-width="2"/><text y="7" fill="#ffe091" font-size="20" font-weight="800">03</text><text y="64" fill="#fff8df" font-size="15" font-weight="700">COMPARE</text><text y="85" fill="#bdb59a" font-size="12">Choose the best result</text></g>
+    <g transform="translate(735 78)"><circle r="31" fill="#221e10" stroke="#d99b2b" stroke-width="2"/><text y="7" fill="#ffe091" font-size="20" font-weight="800">04</text><text y="64" fill="#fff8df" font-size="15" font-weight="700">COPY</text><text y="85" fill="#bdb59a" font-size="12">Rockstar payload</text></g>
+  </g>
+</svg>

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "v1-beam-clean",
   "displayName": "Beam Clean",
-  "isDefault": false,
+  "isDefault": true,
   "minimumEngineVersion": "1.0.0",
   "pipeline": {
     "runner": "beam",

@@ -1,42 +1,109 @@
-# GTA Emblem Maker
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/banner-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/banner-light.svg">
+  <img alt="GTA Emblem Maker — image to Rockstar-compatible emblem payload" src="./assets/banner-dark.svg" width="100%">
+</picture>
 
-An unofficial native Windows application that converts an image into a Rockstar-compatible GTA emblem payload. It preserves transparent backgrounds, shows a live fitting preview, and enforces the 1,250,000-character import limit.
+<p align="center">
+  <a href="https://github.com/Debang0000/GTA-Emblem-Maker/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Debang0000/GTA-Emblem-Maker?style=for-the-badge&label=DOWNLOAD&color=19c37d"></a>
+  <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0b84ff?style=for-the-badge&logo=windows11&logoColor=white">
+  <img alt="NVIDIA CUDA" src="https://img.shields.io/badge/NVIDIA-CUDA-76b900?style=for-the-badge&logo=nvidia&logoColor=white">
+  <img alt=".NET Framework 4.8" src="https://img.shields.io/badge/.NET_Framework-4.8-512bd4?style=for-the-badge&logo=dotnet&logoColor=white">
+</p>
 
-## Pipelines
+<p align="center"><strong>Turn a raster image into a layered GTA crew emblem—locally, natively, and within Rockstar's payload budget.</strong></p>
 
-| Pipeline | Method |
-| --- | --- |
-| **Best Quality** | Beam search followed by local exact pair refinement. Recommended for final output. |
-| **Beam Clean** | Beam search only. Faster and useful when pair refinement changes little. |
-| **Perceptual** | Greedy search with LPIPS AlexNet 224 reranking. Provides a different visual tradeoff. |
-| **Official Catalog Quality** | The recovered mixed-primitive schedule plus nine official Rockstar curves and two official round shapes, scored on CUDA and reranked with native edge detail. |
+<p align="center">
+  <a href="#why-gta-emblem-maker">Features</a> &bull;
+  <a href="#quick-start">Quick start</a> &bull;
+  <a href="#choose-a-pipeline">Pipelines</a> &bull;
+  <a href="#build-from-source">Build</a>
+</p>
 
-`Generate all` runs the shared Beam stage once, then overlaps CPU pair refinement with the GPU Perceptual pipeline. Completed results can be compared in the application before copying the import code.
+> [!IMPORTANT]
+> GTA Emblem Maker is an unofficial community tool and is not affiliated with or endorsed by Rockstar Games or Take-Two Interactive.
 
-## How It Works
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/divider-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/divider-light.svg">
+  <img alt="" src="./assets/divider-dark.svg" width="100%">
+</picture>
 
-1. The source is normalized to a 512 x 512 RGBA target. Transparent inputs use alpha-aware error weighting and export with a transparent SVG background.
-2. A persistent CUDA service generates and scores rotated ellipses and the selected official Rockstar catalog shapes without repeatedly transferring the working image between CPU and GPU. Candidate selection combines weighted pixel error, code-length awareness, and local parameter search.
-3. Beam search keeps the best two partial solutions and expands two branches per layer, reducing early greedy mistakes without making the search prohibitively large.
-4. Best Quality ranks high-error image windows and jointly refines visible layer pairs. Position, size, rotation, color, and alpha changes are accepted only when local and global error improve and the payload remains within budget.
-5. The Perceptual pipeline reranks top pixel-loss candidates with LPIPS v0.1 AlexNet 224 through ONNX Runtime DirectML, starting at the configured late fitting stage.
+## Why GTA Emblem Maker
 
-Pipeline behavior is stored in JSON profiles under `profiles`, so future versions can tune or add profiles without changing the UI.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/features-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/features-light.svg">
+  <img alt="Native Windows UI, CUDA fitting, alpha-aware export, and three fitting pipelines" src="./assets/features-dark.svg" width="100%">
+</picture>
 
-Version 1.1 adds exact official curve and round-shape export, including independent horizontal and vertical scaling. Fitting quality still has room for improvement on fine facial and line-art details.
+The app converts a 512 × 512 RGBA target into Rockstar-supported primitive layers. A persistent CUDA scorer searches candidate geometry on the GPU, while the native WPF interface streams progress, previews completed results, and copies the final import payload.
 
-## Usage
+Transparent source images receive alpha-aware error weighting and a transparent SVG background. Pipeline behavior lives in versioned JSON files under [`profiles`](./profiles), so quality strategies can evolve without hardcoding them into the UI.
 
-Download `GTAEmblemMaker-v1.1.1.zip` from GitHub Releases, extract it, and run `GTAEmblemMaker.exe`. Select an image and pipeline, generate the emblem, then use **Copy Code** for the Rockstar import payload.
+## Quick start
 
-Runtime requirements: Windows x64, .NET Framework 4.8, and an NVIDIA CUDA-capable GPU.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/install-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/install-light.svg">
+  <img alt="Download, extract, and run GTAEmblemMaker.exe" src="./assets/install-dark.svg" width="100%">
+</picture>
 
-## Build
+1. Download [`GTAEmblemMaker-v1.1.1.zip`](https://github.com/Debang0000/GTA-Emblem-Maker/releases/download/v1.1.1/GTAEmblemMaker-v1.1.1.zip).
+2. Extract the archive and run `GTAEmblemMaker.exe`.
+3. Select an image and a fitting pipeline, then choose **Generate** or **Generate all**.
+4. Compare the completed results and choose **Copy Code** for the Rockstar import payload.
 
-Source builds also require the CUDA Toolkit and MSVC toolchain.
+**Runtime requirements:** Windows 10 version 1809 or newer, x64, .NET Framework 4.8, and a CUDA-capable NVIDIA GPU.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/steps-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/steps-light.svg">
+  <img alt="Normalize, fit, compare, and copy workflow" src="./assets/steps-dark.svg" width="100%">
+</picture>
+
+## Choose a pipeline
+
+| Pipeline | Best for | Method |
+| --- | --- | --- |
+| **Beam Clean** | Faster clean results | Beam search without the pair-refinement pass |
+| **Perceptual** | A different visual tradeoff | Greedy search with LPIPS v0.1 AlexNet 224 reranking through ONNX Runtime DirectML |
+| **Official Catalog Quality** | Mixed Rockstar primitives | CUDA search over rotated primitives, nine official curves, and two official round shapes, with native edge-detail reranking |
+
+**Generate all** runs all three pipelines so completed results can be compared in one session.
+
+<details>
+<summary><strong>How the fitting engine works</strong></summary>
+
+1. Normalize the source into a 512 × 512 RGBA target and select opaque or alpha-aware weighting.
+2. Generate and score rotated primitives on a persistent CUDA service without repeatedly transferring the working image between CPU and GPU.
+3. Keep the strongest partial solutions with beam search while enforcing the configured payload budget.
+4. Export Rockstar-compatible SVG and layer data, plus previews and run artifacts under `%LOCALAPPDATA%\GTAEmblemMaker\runs`.
+
+</details>
+
+## Build from source
+
+Source builds require Windows x64, .NET Framework 4.8 developer tools, the MSVC toolchain, and the NVIDIA CUDA Toolkit.
+
+```powershell
+.\third_party\cuda-scorer\build.ps1
+dotnet build .\native\GTAEmblemMaker.sln -c Release -p:Platform=x64
+.\native\GTAEmblemMaker.Checks\bin\x64\Release\net48\GTAEmblemMaker.Checks.exe
+```
+
+Create the portable release archive with:
 
 ```powershell
 .\scripts\package-windows.ps1
 ```
 
-The portable package is written to `release\GTAEmblemMaker-v1.1.1.zip`.
+The archive is written under `release\`. The production package contains the native executable, CUDA scorer, profiles, perceptual model, and required runtime libraries—no browser or web runtime.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/divider-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/divider-light.svg">
+  <img alt="" src="./assets/divider-dark.svg" width="100%">
+</picture>
+
+<p align="center"><sub>Built for emblem makers who would rather spend GPU time than place 1,500 shapes by hand.</sub></p>

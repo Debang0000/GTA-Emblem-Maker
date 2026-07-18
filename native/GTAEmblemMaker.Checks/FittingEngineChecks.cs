@@ -13,12 +13,11 @@ namespace GTAEmblemMaker.Checks
 {
     internal static class FittingEngineChecks
     {
-        internal static void Run(FitProfile perceptualProfile, FitProfile beamProfile, FitProfile pairProfile)
+        internal static void Run(FitProfile perceptualProfile, FitProfile beamProfile)
         {
             var beamBest = BeamFitter.BestIndices(new long[] { 9, 3, 3, 7 }, 2);
             Check.Equal(1, beamBest[0], "beam best index");
             Check.Equal(2, beamBest[1], "beam stable tie index");
-            Check.True(PipelineEngine.CanShareBeam(beamProfile, pairProfile), "beam result sharing compatibility");
             Check.False(PipelineEngine.CanShareBeam(beamProfile, perceptualProfile), "beam result sharing rejects greedy");
             CheckDispatch(perceptualProfile);
             CheckLayerOptimizer();
@@ -61,8 +60,6 @@ namespace GTAEmblemMaker.Checks
             var weights = FitMath.BuildWeightMaps(source.CanonicalRgba, 512, 512)[beam.WeightMapId].Q8;
             Check.Equal(FitMath.WeightedFullError(source.CanonicalRgba, beam.CurrentRgba, weights), beam.BaseTotalError, "beam exact error parity");
             Check.Equal("#transparent", beam.Payload.BackgroundColor, "beam transparent background");
-            var refined = ExactPairRefiner.RefineExact(source, beam.Shapes, beamProfile, new[] { 1, 2 }, 1, 1, CancellationToken.None);
-            Check.True(refined.BaseTotalError <= beam.BaseTotalError, "exact pair non-regression");
         }
 
         private static void CheckLayerOptimizer()

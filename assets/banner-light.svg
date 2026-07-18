@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 280" width="840" height="280" role="img" aria-labelledby="title desc">
+  <title id="title">GTA Emblem Maker</title>
+  <desc id="desc">A light animated banner showing layered emblem geometry and GPU telemetry.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6fbf8"/>
+      <stop offset="0.55" stop-color="#eff8f3"/>
+      <stop offset="1" stop-color="#fff8e7"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="-1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#996710"/>
+      <stop offset="0.5" stop-color="#d39a25"/>
+      <stop offset="1" stop-color="#76500e"/>
+      <animate attributeName="x1" values="-1;1;-1" dur="6s" repeatCount="indefinite"/>
+      <animate attributeName="x2" values="0;2;0" dur="6s" repeatCount="indefinite"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#0a9b60" stop-opacity="0.19"/>
+      <stop offset="1" stop-color="#0a9b60" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M28 0H0V28" fill="none" stroke="#0a7d4d" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="840" height="280" rx="18" fill="url(#bg)"/>
+  <rect x="1" y="1" width="838" height="278" rx="17" fill="none" stroke="#bed6c8"/>
+  <rect width="840" height="280" rx="18" fill="url(#grid)"/>
+  <circle cx="690" cy="120" r="190" fill="url(#glow)"><animate attributeName="r" values="170;205;170" dur="7s" repeatCount="indefinite"/></circle>
+  <g transform="translate(661 139)" fill="none" stroke-linecap="round">
+    <ellipse rx="90" ry="58" stroke="#0a9b60" stroke-width="2" opacity="0.88"><animateTransform attributeName="transform" type="rotate" values="-12;4;-12" dur="8s" repeatCount="indefinite"/></ellipse>
+    <rect x="-54" y="-54" width="108" height="108" rx="8" stroke="#b77b14" stroke-width="2" opacity="0.75"><animateTransform attributeName="transform" type="rotate" values="10;-5;10" dur="9s" repeatCount="indefinite"/></rect>
+    <path d="M-74 41C-20-75 25-68 76 24" stroke="#147d53" stroke-width="2" opacity="0.72"/>
+    <circle r="5" fill="#b77b14" stroke="none"><animate attributeName="r" values="4;7;4" dur="2.8s" repeatCount="indefinite"/></circle>
+  </g>
+  <text x="58" y="71" fill="#087348" font-family="'Courier New', monospace" font-size="14" letter-spacing="3">NATIVE WINDOWS · CUDA FITTING</text>
+  <text x="58" y="137" fill="url(#gold)" font-family="'Segoe UI', Arial, sans-serif" font-size="52" font-weight="800" letter-spacing="-2">GTA EMBLEM MAKER</text>
+  <text x="60" y="174" fill="#2e4339" font-family="'Segoe UI', Arial, sans-serif" font-size="19">Raster in. Rockstar-compatible layers out.</text>
+  <g font-family="'Courier New', monospace" font-size="12">
+    <rect x="58" y="211" width="130" height="30" rx="15" fill="#e0f4e9" stroke="#8ac8a8"/>
+    <circle cx="75" cy="226" r="4" fill="#0a9b60"><animate attributeName="opacity" values="0.35;1;0.35" dur="1.8s" repeatCount="indefinite"/></circle>
+    <text x="87" y="230" fill="#08613d">GPU ONLINE</text>
+    <rect x="198" y="211" width="152" height="30" rx="15" fill="#fff3cf" stroke="#d5b35f"/>
+    <text x="217" y="230" fill="#76500e">PAYLOAD AWARE</text>
+  </g>
+</svg>
