@@ -77,7 +77,7 @@ namespace GTAEmblemMaker.Checks
             Check.Equal("Beam Clean", catalog.Default.DisplayName, "default profile display name");
             foreach (var profile in catalog.Profiles)
             {
-                foreach (var stage in profile.Stages) Check.Equal(1270000, stage.Budget, profile.Id + " production budget");
+                foreach (var stage in profile.Stages) Check.Equal(1250000, stage.Budget, profile.Id + " production budget");
                 if (profile.Id == "v1-catalog-quality") Check.Equal("1.1.2", profile.MinimumEngineVersion, "catalog minimum engine version");
             }
             Check.Equal("beam", catalog.Default.Pipeline.Runner, "default pipeline runner");

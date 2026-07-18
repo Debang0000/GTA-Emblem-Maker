@@ -13,7 +13,7 @@
 - Keep the existing .NET Framework 4.8 and Windows x64 runtime baseline.
 - Add no third-party packaging dependency.
 - Publish both `GTAEmblemMaker-v1.1.2.exe` and `GTAEmblemMaker-v1.1.2.zip`.
-- Keep all three production profile budgets at decimal `1270000`; do not use `1280000`.
+- Keep all three production profile budgets at decimal `1250000` for reliable Social Club imports.
 - Keep Beam Clean as the only default profile.
 - Do not present transparency or CUDA availability as product selling points.
 - Name Emblem Helper and compare the intended use cases without claiming universal superiority.
@@ -330,7 +330,7 @@ Beam search keeps multiple partial reconstructions alive instead of trusting eve
 The catalog pipeline combines rotated ellipses, rectangles, triangles, line-like shapes, nine official Rockstar curves, and two official round shapes. Export uses the geometry, cleanup precision, and expanded SVG paths observed from Rockstar's own editor.
 
 ### Payload cost is part of the optimization
-The fitter tracks generated-code cost while adding layers. A visually useful candidate still has to fit inside the decimal 1,270,000-character production budget and produce layer data that Social Club accepts.
+The fitter tracks generated-code cost while adding layers. A visually useful candidate still has to fit inside the decimal 1,250,000-character production budget and produce layer data that Social Club accepts.
 ```
 
 - [ ] **Step 5: Add factual engineering depth**
@@ -399,7 +399,7 @@ Create `docs/releases/v1.1.2.md`:
 ## What changed
 
 - Fixed Official Catalog Quality exports to use Rockstar-compatible geometry, cleanup precision, transforms, and expanded SVG paths.
-- Kept the production generated-code budget at decimal 1,270,000 after live testing showed that 1,280,000 was rejected by Rockstar.
+- Kept the production generated-code budget at decimal 1,250,000 for more reliable Social Club imports.
 - Removed the misleading Best Quality profile; Beam Clean is now the default.
 - Ships three fitting profiles: Beam Clean, Perceptual AlexNet 224, and Official Catalog Quality.
 - Added a self-extracting EXE for one-file download while retaining the portable ZIP.

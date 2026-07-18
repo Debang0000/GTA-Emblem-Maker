@@ -62,7 +62,7 @@ The catalog strategy combines rotated ellipses, rectangles, triangles, line-like
 
 ### Payload cost is part of the optimization
 
-The fitter tracks generated-code cost while adding layers. A visually useful candidate still has to fit inside the decimal 1,270,000-character production budget and produce SVG plus layer data that Social Club accepts.
+The fitter tracks generated-code cost while adding layers. A visually useful candidate still has to fit inside the decimal 1,250,000-character production budget and produce SVG plus layer data that Social Club accepts.
 
 ## Engineering the search
 
