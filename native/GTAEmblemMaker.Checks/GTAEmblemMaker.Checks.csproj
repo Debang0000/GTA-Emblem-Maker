@@ -6,7 +6,10 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\GTAEmblemMaker.Core\GTAEmblemMaker.Core.csproj" />
+    <Compile Include="..\GTAEmblemMaker.Bundle\BundleLauncher.cs" Link="BundleLauncher.cs" />
     <Reference Include="PresentationCore" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="WindowsBase" />
   </ItemGroup>
