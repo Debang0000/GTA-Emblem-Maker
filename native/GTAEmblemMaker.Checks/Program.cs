@@ -69,13 +69,17 @@ namespace GTAEmblemMaker.Checks
                 RunFormalFit(args, false);
                 return;
             }
-            Check.Equal("1.1.1", EngineInfo.Version, "engine version");
+            Check.Equal("1.1.2", EngineInfo.Version, "engine version");
 
             var catalog = ProfileCatalog.Load(ProfileFolder());
             Check.Equal(4, catalog.Profiles.Count, "production profile count");
             Check.Equal("v1-best-quality", catalog.Default.Id, "default profile");
             Check.Equal("Best Quality", catalog.Default.DisplayName, "default profile display name");
-            Check.Equal(1250000, catalog.Default.Stages[0].Budget, "production budget");
+            foreach (var profile in catalog.Profiles)
+            {
+                foreach (var stage in profile.Stages) Check.Equal(1270000, stage.Budget, profile.Id + " production budget");
+                if (profile.Id == "v1-catalog-quality") Check.Equal("1.1.2", profile.MinimumEngineVersion, "catalog minimum engine version");
+            }
             Check.Equal("beam-pair", catalog.Default.Pipeline.Runner, "default pipeline runner");
 
             var validProfile = File.ReadAllText(Path.Combine(ProfileFolder(), "v1-best-quality.json"));

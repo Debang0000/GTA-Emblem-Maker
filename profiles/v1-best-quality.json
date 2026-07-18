@@ -20,7 +20,7 @@
     {
       "id": "current-image-fit",
       "maxLayers": 1600,
-      "budget": 1250000,
+      "budget": 1270000,
       "minAxis": 2,
       "residentSelectLayer": true,
       "residentSelection": "code-aware-proxy",
