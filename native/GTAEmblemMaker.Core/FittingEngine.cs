@@ -136,6 +136,7 @@ namespace GTAEmblemMaker.Core
             cancellationToken.ThrowIfCancellationRequested();
             var stage = FitMath.ResolveStage(request.Profile, "current-image-fit");
             var compatibilityResident = request.Profile.Pipeline.Runner == "catalog-compatible";
+            var cleanLogo = request.Profile.Pipeline.Runner == "clean-logo";
             if (!stage.ResidentSelectLayer || !stage.ResidentDeviceChunk) throw new InvalidOperationException("The selected profile does not use the native resident fitting path.");
             if (request.Source.CanonicalRgba == null || request.Source.CanonicalRgba.Length != Width * Height * 4) throw new ArgumentException("The source image is not a canonical 512x512 RGBA image.", "request");
 
@@ -226,7 +227,8 @@ namespace GTAEmblemMaker.Core
                             strokeScale,
                             strokeScale == 1 ? stage.StrokeSearch.DetailMinLength : strokeScale == 2 ? stage.StrokeSearch.ContourMinLength : 0,
                             strokeScale == 1 ? stage.StrokeSearch.DetailMaxLength : strokeScale == 2 ? stage.StrokeSearch.ContourMaxLength : 0,
-                            compatibilityResident);
+                            compatibilityResident,
+                            cleanLogo);
                         var mixed = selectRequest.IsMixed;
                         var selected = await client.SelectLayerAsync(selectRequest, cancellationToken).ConfigureAwait(false);
                         var shapeKind = mixed ? selected.SelectedShapeKind : 0;
@@ -391,7 +393,7 @@ namespace GTAEmblemMaker.Core
             return builder;
         }
 
-        internal static CudaSelectLayerRequest CreateSelectRequest(FitStage stage, int layer, IReadOnlyList<string> shapes, int minAxis = 0, uint guideMode = 0, uint strokeScale = 0, int minLongAxis = 0, int maxLongAxis = 0, bool compatibilityResident = false)
+        internal static CudaSelectLayerRequest CreateSelectRequest(FitStage stage, int layer, IReadOnlyList<string> shapes, int minAxis = 0, uint guideMode = 0, uint strokeScale = 0, int minLongAxis = 0, int maxLongAxis = 0, bool compatibilityResident = false, bool fixedOpaqueAlpha = false)
         {
             if (stage == null) throw new ArgumentNullException("stage");
             var shapeMask = CandidateGenerator.ShapeMask(shapes);
@@ -411,10 +413,10 @@ namespace GTAEmblemMaker.Core
                 MinAxis = checked((uint)(minAxis > 0 ? minAxis : stage.MinAxis)),
                 Layer = (uint)layer,
                 Weighted = true,
-                MutateAlpha = true,
-                MinAlpha = 1,
+                MutateAlpha = !fixedOpaqueAlpha,
+                MinAlpha = fixedOpaqueAlpha ? 255u : 1u,
                 MaxAlpha = 255,
-                InitialAlpha = CandidateGenerator.InitialAlpha,
+                InitialAlpha = fixedOpaqueAlpha ? 255u : CandidateGenerator.InitialAlpha,
                 Seed = CandidateGenerator.SeedForLayer(layer),
                 ShapeMask = mixed ? shapeMask : 0,
                 SelectionMode = mixed ? CandidateGenerator.SelectionMode(stage.ResidentSelection) : 0,

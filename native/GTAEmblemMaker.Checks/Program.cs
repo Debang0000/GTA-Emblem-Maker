@@ -147,7 +147,7 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(0, cleanStage.LayerOptimization.OverfitPercent, "clean logo excludes overfit");
             Check.Equal(0, cleanStage.LayerOptimization.RefinePercent, "clean logo excludes refinement");
             Check.Equal(0, cleanStage.LayerOptimization.ReplacementPercent, "clean logo excludes replacement");
-            FittingEngineChecks.Run(perceptualProfile, beamCleanProfile);
+            FittingEngineChecks.Run(perceptualProfile, beamCleanProfile, cleanLogoProfile);
         }
 
         private static string ToHex(byte[] bytes)

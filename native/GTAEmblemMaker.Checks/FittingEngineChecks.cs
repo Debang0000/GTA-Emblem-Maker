@@ -13,13 +13,14 @@ namespace GTAEmblemMaker.Checks
 {
     internal static class FittingEngineChecks
     {
-        internal static void Run(FitProfile perceptualProfile, FitProfile beamProfile)
+        internal static void Run(FitProfile perceptualProfile, FitProfile beamProfile, FitProfile cleanLogoProfile)
         {
             var beamBest = BeamFitter.BestIndices(new long[] { 9, 3, 3, 7 }, 2);
             Check.Equal(1, beamBest[0], "beam best index");
             Check.Equal(2, beamBest[1], "beam stable tie index");
             Check.False(PipelineEngine.CanShareBeam(beamProfile, perceptualProfile), "beam result sharing rejects greedy");
             CheckDispatch(perceptualProfile);
+            CheckCleanLogoDispatch(cleanLogoProfile);
             CheckLayerOptimizer();
             var scorer = RepositoryFile("third_party", "cuda-scorer", "bin", "cuda-scorer.exe");
             if (!File.Exists(scorer))
@@ -130,6 +131,20 @@ namespace GTAEmblemMaker.Checks
             var rerank = FittingEngine.CreateSelectRequest(stage, 801, FitMath.ShapeChoicesForLayer(stage, 801));
             Check.Equal((int)CudaSelectLayerMode.MixedDeviceChunk, (int)rerank.Mode, "perceptual rerank dispatch");
             Check.Equal(1, (int)rerank.ShapeMask, "perceptual ellipse shape mask");
+            Check.True(rerank.MutateAlpha, "perceptual mutates alpha");
+            Check.Equal(1, (int)rerank.MinAlpha, "perceptual minimum alpha");
+            Check.Equal(255, (int)rerank.MaxAlpha, "perceptual maximum alpha");
+        }
+
+        private static void CheckCleanLogoDispatch(FitProfile profile)
+        {
+            var stage = FitMath.ResolveStage(profile, "current-image-fit");
+            var request = FittingEngine.CreateSelectRequest(stage, 1, FitMath.ShapeChoicesForLayer(stage, 1), fixedOpaqueAlpha: true);
+            Check.Equal((int)CudaSelectLayerMode.MixedDeviceChunk, (int)request.Mode, "clean logo mixed dispatch");
+            Check.False(request.MutateAlpha, "clean logo fixed alpha");
+            Check.Equal(255, (int)request.MinAlpha, "clean logo minimum alpha");
+            Check.Equal(255, (int)request.MaxAlpha, "clean logo maximum alpha");
+            Check.Equal(255, (int)request.InitialAlpha, "clean logo initial alpha");
         }
 
         private static void CheckRun(FitProfile profile, string scorer, SourceImage source, bool transparent, string expectedTraceHash, string expectedCurrentHash, string artifactRoot)
