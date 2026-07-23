@@ -14,27 +14,27 @@ namespace GTAEmblemMaker.Checks
             Directory.CreateDirectory(root);
             try
             {
-                Check.Equal("v1.1.2", BundleLauncher.VersionLabel(new Version(1, 1, 2, 0)), "bundle version label");
+                Check.Equal("v1.1.3", BundleLauncher.VersionLabel(new Version(1, 1, 3, 0)), "bundle version label");
                 using (var payload = CreatePayload())
                 {
-                    var first = BundleLauncher.PreparePayload(payload, root, "v1.1.2");
-                    Check.True(Path.GetFileName(first).StartsWith("v1.1.2-", StringComparison.Ordinal), "bundle cache uses version tag");
+                    var first = BundleLauncher.PreparePayload(payload, root, "v1.1.3");
+                    Check.True(Path.GetFileName(first).StartsWith("v1.1.3-", StringComparison.Ordinal), "bundle cache uses version tag");
                     Check.True(File.Exists(Path.Combine(first, "GTAEmblemMaker.exe")), "bundle extracts application");
                     Check.True(File.Exists(Path.Combine(first, "profiles", "v1-beam-clean.json")), "bundle extracts profiles");
 
                     payload.Position = 0;
-                    Check.Equal(first, BundleLauncher.PreparePayload(payload, root, "v1.1.2"), "bundle reuses cache");
+                    Check.Equal(first, BundleLauncher.PreparePayload(payload, root, "v1.1.3"), "bundle reuses cache");
 
                     File.Delete(Path.Combine(first, "profiles", "v1-beam-clean.json"));
                     payload.Position = 0;
-                    Check.Equal(first, BundleLauncher.PreparePayload(payload, root, "v1.1.2"), "bundle repairs cache");
+                    Check.Equal(first, BundleLauncher.PreparePayload(payload, root, "v1.1.3"), "bundle repairs cache");
                     Check.True(File.Exists(Path.Combine(first, "profiles", "v1-beam-clean.json")), "bundle repair restores file");
                 }
 
                 using (var unsafePayload = CreateUnsafePayload())
                 {
                     Check.Throws<InvalidDataException>(
-                        () => BundleLauncher.PreparePayload(unsafePayload, root, "v1.1.2"),
+                        () => BundleLauncher.PreparePayload(unsafePayload, root, "v1.1.3"),
                         "bundle rejects zip traversal");
                     Check.False(File.Exists(Path.Combine(root, "escape.txt")), "bundle traversal stays contained");
                 }

@@ -13,7 +13,7 @@
 
 <p align="center"><strong>A quality-first GTA emblem converter for complex images.</strong></p>
 
-GTA Emblem Maker converts photos, illustrations, anime artwork, and other detailed raster images into layered Rockstar emblems. It deliberately spends more compute time on reconstruction quality instead of trying to produce an instant outline-based result.
+GTA Emblem Maker converts photos, illustrations, anime artwork, and clean logos into layered Rockstar emblems. It deliberately spends more compute time on reconstruction quality instead of trying to produce an instant outline-based result.
 
 <p align="center">
   <a href="#why-another-emblem-converter">Why</a> &bull;
@@ -28,13 +28,13 @@ GTA Emblem Maker converts photos, illustrations, anime artwork, and other detail
 
 ## Why another emblem converter?
 
-Emblem Helper is the tool most creators already know: it runs online, finishes extremely quickly, requires no installation, and works well for structurally simple, logo-like images. GTA Emblem Maker does not try to replace that workflow.
+Emblem Helper is the tool most creators already know: it runs online, finishes extremely quickly, requires no installation, and works well for structurally simple, logo-like images. GTA Emblem Maker remains the slower local option, with a dedicated Clean Logo pipeline when edge and color fidelity matter.
 
 This project covers the opposite use case. It is for people who want to turn a complex picture into an emblem and are willing to download a Windows application, use an NVIDIA GPU, and wait longer for a more involved layered fit.
 
 | | Emblem Helper | GTA Emblem Maker |
 | --- | --- | --- |
-| Best suited to | Simple logos and clean shapes | Photos, illustrations, anime art, and complex compositions |
+| Best suited to | Fast conversion of simple logos | Photos, illustrations, anime art, and clean logos that need stricter edge control |
 | Delivery | Online | Local Windows application |
 | Speed | Extremely fast | Quality-first and compute-intensive |
 | Hardware | No local GPU requirement | NVIDIA CUDA-capable GPU |
@@ -78,7 +78,7 @@ CUDA is an implementation requirement, not the reason to use the project. The re
 
 ## Quick start
 
-1. Download [`GTAEmblemMaker-v1.1.2.exe`](https://github.com/Debang0000/GTA-Emblem-Maker/releases/download/v1.1.2/GTAEmblemMaker-v1.1.2.exe). The [portable ZIP](https://github.com/Debang0000/GTA-Emblem-Maker/releases/download/v1.1.2/GTAEmblemMaker-v1.1.2.zip) is also available.
+1. Download [`GTAEmblemMaker-v1.1.3.exe`](https://github.com/Debang0000/GTA-Emblem-Maker/releases/download/v1.1.3/GTAEmblemMaker-v1.1.3.exe). The [portable ZIP](https://github.com/Debang0000/GTA-Emblem-Maker/releases/download/v1.1.3/GTAEmblemMaker-v1.1.3.zip) is also available.
 2. Run the EXE, or extract the ZIP and run `GTAEmblemMaker.exe`.
 3. Open an image, choose one fitting strategy or **Generate all**, and wait for the fit to complete.
 4. Compare completed results, choose **Copy Import Code**, and run that code in the Rockstar emblem editor.
@@ -92,8 +92,9 @@ The self-extracting EXE stores its validated runtime under `%LOCALAPPDATA%\GTAEm
 | **Beam Clean** | Keeps two partial fits and expands two branches per layer | Stable pixel-error fitting without an extra reranking backend |
 | **Perceptual AlexNet 224** | Greedy fitting with late LPIPS reranking through DirectML | A different choice when perceptual structure matters more than the lowest raw pixel loss |
 | **Official Catalog Quality** | Mixed primitives plus verified official curves and rounds, with native edge-detail reranking | Broader shape vocabulary and save-compatible catalog output |
+| **Clean Logo** | Uses opaque source-derived colors, protected support, local-regression checks, and a final edge audit | Simple transparent graphics that must avoid stray colors, black fringes, and unsupported lines |
 
-**Generate all** runs all three strategies so their completed outputs can be compared in the application. None is labeled universally best because the useful tradeoff depends on the source image.
+**Generate all** runs all four strategies so their completed outputs can be compared in the application. None is labeled universally best because the useful tradeoff depends on the source image.
 
 ## Requirements and tradeoffs
 

@@ -1,9 +1,10 @@
 param(
-  [string]$OutDir = "release\GTAEmblemMaker-v1.1.2",
+  [string]$OutDir = "release\GTAEmblemMaker-v1.1.3",
   [string[]]$ProfilePaths = @(
     "profiles\v1-beam-clean.json",
     "profiles\v1-perceptual.json",
-    "profiles\v1-catalog-quality.json"
+    "profiles\v1-catalog-quality.json",
+    "profiles\v1-clean-logo.json"
   ),
   [switch]$NoBuild
 )
@@ -23,19 +24,22 @@ foreach ($profilePath in $ProfilePaths) {
     throw "Profile must be an existing file inside the repository: $profilePath"
   }
   $profile = Get-Content -LiteralPath $profileSource -Raw | ConvertFrom-Json
-  $backend = [string]$profile.stages[0].perceptualRerank.backend
-  $model = [string]$profile.stages[0].perceptualRerank.model
-  if ($backend -eq "lpips-directml") {
-    if ([String]::IsNullOrWhiteSpace($model) -or [IO.Path]::GetFileName($model) -ne $model) { throw "Profile contains an invalid perceptual model ID." }
-    $modelSource = Join-Path $root "third_party\lpips-winml\model\$model.onnx"
-    if (-not (Test-Path -LiteralPath $modelSource)) { throw "Perceptual model is missing: $model" }
-    $models[$model] = $modelSource
-  } elseif ($backend -ne "native-edge-detail") {
-    throw "Profile contains an unsupported perceptual backend: $backend"
+  $rerank = $profile.stages[0].perceptualRerank
+  if ($null -ne $rerank) {
+    $backend = [string]$rerank.backend
+    $model = [string]$rerank.model
+    if ($backend -eq "lpips-directml") {
+      if ([String]::IsNullOrWhiteSpace($model) -or [IO.Path]::GetFileName($model) -ne $model) { throw "Profile contains an invalid perceptual model ID." }
+      $modelSource = Join-Path $root "third_party\lpips-winml\model\$model.onnx"
+      if (-not (Test-Path -LiteralPath $modelSource)) { throw "Perceptual model is missing: $model" }
+      $models[$model] = $modelSource
+    } elseif ($backend -ne "native-edge-detail") {
+      throw "Profile contains an unsupported perceptual backend: $backend"
+    }
   }
   $profiles += [pscustomobject]@{ Source = $profileSource; Value = $profile }
 }
-if ($profiles.Count -ne 3) { throw "The V1.1.2 package requires exactly three profiles." }
+if ($profiles.Count -ne 4) { throw "The V1.1.3 package requires exactly four profiles." }
 
 if (-not $NoBuild) {
   & (Join-Path $root "third_party\cuda-scorer\build.ps1")
@@ -86,10 +90,10 @@ Copy-Item -LiteralPath (Join-Path $packages "microsoft.ai.directml\1.15.4\LICENS
 GTA Emblem Maker
 
 Run GTAEmblemMaker.exe.
-Pipelines: Beam Clean, Perceptual AlexNet 224, Official Catalog Quality.
+Pipelines: Beam Clean, Perceptual AlexNet 224, Official Catalog Quality, Clean Logo.
 
 Requires Windows 10 version 1809 or newer, x64, .NET Framework 4.8, and a CUDA-capable NVIDIA GPU.
-The Perceptual profile uses LPIPS v0.1 through ONNX Runtime DirectML. Official Catalog Quality uses its native edge-detail reranker.
+The Perceptual profile uses LPIPS v0.1 through ONNX Runtime DirectML. Official Catalog Quality uses its native edge-detail reranker. Clean Logo protects source edges and colors for simple transparent graphics.
 Run outputs are stored under LocalAppData\GTAEmblemMaker\runs.
 "@ | Set-Content -LiteralPath (Join-Path $out "README.txt") -Encoding ASCII
 
@@ -104,7 +108,7 @@ if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -CompressionLevel Optimal
 
 $bundleProject = Join-Path $root "native\GTAEmblemMaker.Bundle\GTAEmblemMaker.Bundle.csproj"
-$bundleBuild = [IO.Path]::GetFullPath((Join-Path $root "release\.bundle-v1.1.2"))
+$bundleBuild = [IO.Path]::GetFullPath((Join-Path $root "release\.bundle-v1.1.3"))
 $singleExe = [IO.Path]::GetFullPath("$out.exe")
 foreach ($bundlePath in @($bundleBuild, $singleExe)) {
   if (-not $bundlePath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -116,7 +120,7 @@ if (Test-Path -LiteralPath $singleExe) { Remove-Item -LiteralPath $singleExe -Fo
 try {
   dotnet build $bundleProject -c Release "-p:BundlePayload=$zip" "-p:OutputPath=$bundleBuild\"
   if ($LASTEXITCODE -ne 0) { throw "Single-file launcher build failed." }
-  $builtBundle = Join-Path $bundleBuild "GTAEmblemMaker-v1.1.2.exe"
+  $builtBundle = Join-Path $bundleBuild "GTAEmblemMaker-v1.1.3.exe"
   Copy-Item -LiteralPath $builtBundle -Destination $singleExe -Force
   $prepareProcess = Start-Process -FilePath $singleExe -ArgumentList "--prepare-only" -WindowStyle Hidden -Wait -PassThru
   if ($prepareProcess.ExitCode -ne 0) { throw "Single-file launcher preparation check failed." }
