@@ -202,30 +202,7 @@ namespace GTAEmblemMaker.Core
                     canvas.Clear(BackgroundColor(payload.BackgroundColor));
                     for (var index = 0; index < shapes.Count; index++)
                     {
-                        var state = shapes[index];
-                        var export = GTAEmblemMaker.Core.Shapes.ToExportShape(state, payload.ExportMinAxis);
-                        var values = RockstarExporter.MatrixValues(export);
-                        var matrix = new SKMatrix
-                        {
-                            ScaleX = (float)values.A,
-                            SkewX = (float)values.C,
-                            TransX = (float)values.E,
-                            SkewY = (float)values.B,
-                            ScaleY = (float)values.D,
-                            TransY = (float)values.F,
-                            Persp2 = 1
-                        };
-                        paint.Color = new SKColor((byte)state.Red, (byte)state.Green, (byte)state.Blue, (byte)export.Alpha);
-                        SKPath path;
-                        if (!paths.TryGetValue(export.Definition.Slug, out path))
-                        {
-                            path = SKPath.ParseSvgPathData(export.Definition.Path);
-                            paths.Add(export.Definition.Slug, path);
-                        }
-                        canvas.Save();
-                        canvas.Concat(matrix);
-                        canvas.DrawPath(path, paint);
-                        canvas.Restore();
+                        DrawShape(canvas, paint, paths, shapes[index], payload.ExportMinAxis);
                     }
                     canvas.Flush();
                     var rgba = new byte[info.BytesSize];
@@ -237,6 +214,59 @@ namespace GTAEmblemMaker.Core
                     foreach (var path in paths.Values) path.Dispose();
                 }
             }
+        }
+
+        internal static byte[] RenderShapeOnto(byte[] currentRgba, ShapeState state, int exportMinAxis)
+        {
+            if (currentRgba == null || currentRgba.Length != 512 * 512 * 4) throw new ArgumentException("Current image must be a 512x512 RGBA buffer.", "currentRgba");
+            if (state == null) throw new ArgumentNullException("state");
+            var info = new SKImageInfo(512, 512, SKColorType.Rgba8888, SKAlphaType.Premul);
+            using (var bitmap = new SKBitmap(info))
+            using (var canvas = new SKCanvas(bitmap))
+            using (var paint = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill })
+            {
+                Marshal.Copy(currentRgba, 0, bitmap.GetPixels(), currentRgba.Length);
+                var paths = new Dictionary<string, SKPath>(StringComparer.Ordinal);
+                try
+                {
+                    DrawShape(canvas, paint, paths, state, exportMinAxis);
+                    canvas.Flush();
+                    var rgba = new byte[info.BytesSize];
+                    Marshal.Copy(bitmap.GetPixels(), rgba, 0, rgba.Length);
+                    return rgba;
+                }
+                finally
+                {
+                    foreach (var path in paths.Values) path.Dispose();
+                }
+            }
+        }
+
+        private static void DrawShape(SKCanvas canvas, SKPaint paint, Dictionary<string, SKPath> paths, ShapeState state, int exportMinAxis)
+        {
+            var export = GTAEmblemMaker.Core.Shapes.ToExportShape(state, exportMinAxis);
+            var values = RockstarExporter.MatrixValues(export);
+            var matrix = new SKMatrix
+            {
+                ScaleX = (float)values.A,
+                SkewX = (float)values.C,
+                TransX = (float)values.E,
+                SkewY = (float)values.B,
+                ScaleY = (float)values.D,
+                TransY = (float)values.F,
+                Persp2 = 1
+            };
+            paint.Color = new SKColor((byte)state.Red, (byte)state.Green, (byte)state.Blue, (byte)export.Alpha);
+            SKPath path;
+            if (!paths.TryGetValue(export.Definition.Slug, out path))
+            {
+                path = SKPath.ParseSvgPathData(export.Definition.Path);
+                paths.Add(export.Definition.Slug, path);
+            }
+            canvas.Save();
+            canvas.Concat(matrix);
+            canvas.DrawPath(path, paint);
+            canvas.Restore();
         }
 
         private static SKColor BackgroundColor(string value)

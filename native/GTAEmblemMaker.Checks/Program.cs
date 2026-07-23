@@ -93,6 +93,7 @@ namespace GTAEmblemMaker.Checks
             CheckImages();
             CheckRockstarExport();
             CheckRockstarExportReviewCases();
+            RunArtifactsChecks.Run();
             BundleLauncherChecks.Run();
             OfficialCatalogCurveChecks.Run();
             OfficialCatalogRoundChecks.Run();
