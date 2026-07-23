@@ -12,6 +12,7 @@ namespace GTAEmblemMaker.Checks
             CheckCleanError();
             CheckLocalNonRegression();
             CheckColorSnapAndAcceptance();
+            CheckRankedFinalists();
             CheckSupportRejection();
         }
 
@@ -89,6 +90,20 @@ namespace GTAEmblemMaker.Checks
             CleanLogoProposal proposal;
             Check.False(sanitizer.TrySelect(new[] { oversized }, out proposal), "clean logo rejects transparent spill");
             Check.Equal(1, sanitizer.Metrics.SupportRejectedLayers, "clean logo support rejection metric");
+        }
+
+        private static void CheckRankedFinalists()
+        {
+            var transparent = new byte[Size * Size * 4];
+            var sourceState = new ShapeState("ellipse", 256, 256, 32, 24, 72, 152, 224, 255, 0);
+            var target = RunArtifacts.RenderShapeOnto(transparent, sourceState, 4);
+            var safe = new FitCandidate(12, 0, CandidateShapeKind.RotatedEllipse, "rotated", "rotated", 256, 256, 32, 24, 72, 152, 224, 255, 0, 0.02, 100, 10);
+            var rejected = new FitCandidate(11, 0, CandidateShapeKind.RotatedEllipse, "rotated", "rotated", 256, 256, 64, 48, 72, 152, 224, 255, 0, 0.01, 100, 10);
+            var sanitizer = new CleanLogoSanitizer(target, transparent, UniformWeights(), true, 4);
+            CleanLogoProposal proposal;
+            Check.True(sanitizer.TrySelect(new[] { safe, rejected }, out proposal), "clean logo tries next ranked finalist");
+            Check.Equal(12, (int)proposal.Candidate.CandidateId, "clean logo accepted second-ranked safe finalist");
+            Check.Equal(1, sanitizer.Metrics.SupportRejectedLayers, "clean logo records rejected first finalist");
         }
 
         private static byte[] OpaqueBlack()

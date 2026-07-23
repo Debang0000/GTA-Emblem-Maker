@@ -38,6 +38,7 @@ namespace GTAEmblemMaker.Checks
                 CheckRun(perceptualProfile, scorer, opaque, false, "f5d7fb4366bc5eabfa6835e61b3b6315719e1e38b3d44b103fff323709410dbd", "917c81060fcb9279dbedc3ddb39097e324a5ca582bf38028a3f96cd0aedb1ac7", null);
                 CheckRun(perceptualProfile, scorer, transparent, true, "1919df54919f41b935792812875baf91188d3dd09fb94e321c6c51cf18205b11", "e821ce57fb70818b77cd5d469cf3b823fe62f3e97bf64c416ac362aaf6f60532", Path.Combine(folder, "runs"));
                 CheckBeamRun(beamProfile, perceptualProfile, scorer, transparent);
+                CheckCleanLogoRun(cleanLogoProfile, scorer);
                 CheckBudget(perceptualProfile, scorer, opaque);
                 CheckCancellation(perceptualProfile, scorer, opaque);
             }
@@ -61,6 +62,21 @@ namespace GTAEmblemMaker.Checks
             var weights = FitMath.BuildWeightMaps(source.CanonicalRgba, 512, 512)[beam.WeightMapId].Q8;
             Check.Equal(FitMath.WeightedFullError(source.CanonicalRgba, beam.CurrentRgba, weights), beam.BaseTotalError, "beam exact error parity");
             Check.Equal("#transparent", beam.Payload.BackgroundColor, "beam transparent background");
+        }
+
+        private static void CheckCleanLogoRun(FitProfile profile, string scorer)
+        {
+            var transparent = new byte[512 * 512 * 4];
+            var targetState = new ShapeState("ellipse", 256, 256, 72, 48, 36, 148, 224, 255, 23);
+            var source = SourceImage.FromCanonical(RunArtifacts.RenderShapeOnto(transparent, targetState, 4));
+            var request = new FitRequest(profile, source, scorer) { LayerLimit = 2, Timestamp = 1700000000000 };
+            var result = FittingEngine.RunAsync(request, null, CancellationToken.None).GetAwaiter().GetResult();
+            Check.True(result.CompletedLayers >= 1 && result.CompletedLayers <= 2, "clean logo completes safe layers or stops early");
+            Check.Equal(255, result.Shapes[0].Alpha, "clean logo committed opaque layer");
+            var exact = RunArtifacts.RenderPayloadPreview(result.Shapes, result.Payload);
+            Check.Equal(Hash(exact), Hash(result.CurrentRgba), "clean logo current uses exact payload replay");
+            Check.True(result.Payload.GeneratedCodeLength <= profile.Stages[0].Budget, "clean logo payload budget");
+            Check.True(result.CleanLogoMetrics != null, "clean logo metrics available");
         }
 
         private static void CheckLayerOptimizer()

@@ -100,6 +100,7 @@ namespace GTAEmblemMaker.Core
         public string PerceptualBackend { get; private set; }
         public CudaPerformanceCounters PerformanceCounters { get; private set; }
         public double WallMilliseconds { get; private set; }
+        public CleanLogoMetrics CleanLogoMetrics { get; private set; }
 
         internal FitResult(List<ShapeState> shapes, List<FitLayerTrace> trace, byte[] currentRgba, RockstarPayload payload, bool budgetReached, long baseTotalError, string weightMapId, string perceptualBackend)
             : this(shapes, trace, currentRgba, payload, budgetReached, baseTotalError, weightMapId, perceptualBackend, null, 0)
@@ -107,6 +108,11 @@ namespace GTAEmblemMaker.Core
         }
 
         internal FitResult(List<ShapeState> shapes, List<FitLayerTrace> trace, byte[] currentRgba, RockstarPayload payload, bool budgetReached, long baseTotalError, string weightMapId, string perceptualBackend, CudaPerformanceCounters performanceCounters, double wallMilliseconds)
+            : this(shapes, trace, currentRgba, payload, budgetReached, baseTotalError, weightMapId, perceptualBackend, performanceCounters, wallMilliseconds, null)
+        {
+        }
+
+        internal FitResult(List<ShapeState> shapes, List<FitLayerTrace> trace, byte[] currentRgba, RockstarPayload payload, bool budgetReached, long baseTotalError, string weightMapId, string perceptualBackend, CudaPerformanceCounters performanceCounters, double wallMilliseconds, CleanLogoMetrics cleanLogoMetrics)
         {
             Shapes = new ReadOnlyCollection<ShapeState>(shapes);
             Trace = new ReadOnlyCollection<FitLayerTrace>(trace);
@@ -119,6 +125,7 @@ namespace GTAEmblemMaker.Core
             PerceptualBackend = perceptualBackend;
             PerformanceCounters = performanceCounters;
             WallMilliseconds = wallMilliseconds;
+            CleanLogoMetrics = cleanLogoMetrics;
         }
     }
 
@@ -170,6 +177,7 @@ namespace GTAEmblemMaker.Core
             var activeChoice = FitMath.WeightMapChoiceForLayer(stage, request.Source.IsTransparent, 1);
             var activeMap = maps[activeChoice.WeightMapId];
             var baseTotalError = FitMath.WeightedFullError(target, current, activeMap.Q8);
+            var cleanSanitizer = cleanLogo ? new CleanLogoSanitizer(target, current, activeMap.Q8, request.Source.IsTransparent, (int)Shapes.MinEllipseAxis) : null;
             var budgetReached = false;
             var previewClock = Stopwatch.StartNew();
             var nextPreviewAt = 0L;
@@ -231,10 +239,20 @@ namespace GTAEmblemMaker.Core
                             cleanLogo);
                         var mixed = selectRequest.IsMixed;
                         var selected = await client.SelectLayerAsync(selectRequest, cancellationToken).ConfigureAwait(false);
-                        var shapeKind = mixed ? selected.SelectedShapeKind : 0;
-                        var candidate = CandidateGenerator.FromResidentResult(shapeKind, selected.SelectedCandidate, selected.SelectedScore);
+                        CleanLogoProposal cleanProposal = null;
+                        FitCandidate candidate;
+                        if (cleanLogo)
+                        {
+                            if (!cleanSanitizer.TrySelect(CleanLogoFinalists(selected), out cleanProposal)) break;
+                            candidate = cleanProposal.Candidate;
+                        }
+                        else
+                        {
+                            var shapeKind = mixed ? selected.SelectedShapeKind : 0;
+                            candidate = CandidateGenerator.FromResidentResult(shapeKind, selected.SelectedCandidate, selected.SelectedScore);
+                        }
                         CatalogSelection catalogSelection = null;
-                        if (stage.CatalogSearch != null && layer >= stage.CatalogSearch.FromLayer)
+                        if (!cleanLogo && stage.CatalogSearch != null && layer >= stage.CatalogSearch.FromLayer)
                         {
                             catalogSelection = await CatalogCandidateSearch.SelectAsync(client, stage.CatalogSearch, layer, stage.MinAxis, cancellationToken).ConfigureAwait(false);
                             candidate = ChooseLowestEnergyCandidate(candidate, catalogSelection.BestByIdentity);
@@ -249,7 +267,7 @@ namespace GTAEmblemMaker.Core
                             perceptualMilliseconds = perceptualClock.Elapsed.TotalMilliseconds;
                             candidate = perceptualSelection.Candidate;
                         }
-                        var state = CandidateGenerator.ToShapeState(candidate);
+                        var state = cleanLogo ? cleanProposal.State : CandidateGenerator.ToShapeState(candidate);
                         if (!payloadBuilder.TryAdd(state, searchBudget))
                         {
                             budgetReached = true;
@@ -257,11 +275,23 @@ namespace GTAEmblemMaker.Core
                         }
 
                         states.Add(state);
-                        improvements.Add(candidate.OldErrorDelta >= candidate.NewErrorDelta ? candidate.OldErrorDelta - candidate.NewErrorDelta : 0);
-                        baseTotalError = compatibilityResident
-                            ? FitMath.ApplyCompatibilityCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError)
-                            : FitMath.ApplyCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError);
-                        trace.Add(new FitLayerTrace(layer, candidate.CandidateId, candidate.PoolShapeFamily, activeChoice.WeightMapId, payloadBuilder.BudgetCodeLength, baseTotalError, candidate.Energy, selected.ServerTotalMs + (catalogSelection == null ? 0 : catalogSelection.ServerMilliseconds), perceptualSelection != null, perceptualSelection != null && perceptualSelection.ChangedSelection, perceptualSelection == null ? 0 : perceptualSelection.Score, perceptualMilliseconds));
+                        if (cleanLogo)
+                        {
+                            var previousError = baseTotalError;
+                            cleanSanitizer.Commit(cleanProposal);
+                            current = cleanProposal.CurrentRgba;
+                            baseTotalError = FitMath.WeightedFullError(target, current, activeMap.Q8);
+                            improvements.Add(previousError >= baseTotalError ? checked((ulong)(previousError - baseTotalError)) : 0);
+                        }
+                        else
+                        {
+                            improvements.Add(candidate.OldErrorDelta >= candidate.NewErrorDelta ? candidate.OldErrorDelta - candidate.NewErrorDelta : 0);
+                            baseTotalError = compatibilityResident
+                                ? FitMath.ApplyCompatibilityCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError)
+                                : FitMath.ApplyCandidateAndUpdateError(target, current, Width, candidate, activeMap.Q8, baseTotalError);
+                        }
+                        var selectedEnergy = cleanLogo ? FitMath.EnergyFromTotal(baseTotalError, Width, Height) : candidate.Energy;
+                        trace.Add(new FitLayerTrace(layer, candidate.CandidateId, candidate.PoolShapeFamily, activeChoice.WeightMapId, payloadBuilder.BudgetCodeLength, baseTotalError, selectedEnergy, selected.ServerTotalMs + (catalogSelection == null ? 0 : catalogSelection.ServerMilliseconds), perceptualSelection != null, perceptualSelection != null && perceptualSelection.ChangedSelection, perceptualSelection == null ? 0 : perceptualSelection.Score, perceptualMilliseconds));
                         if (overfitLayers > 0 && layer == totalAttempts && states.Count > maximumLayers)
                         {
                             LayerOptimizer.RetainBestByRemoval(target, initialCurrent, states, trace, improvements, activeMap.Q8, Width, maximumLayers, stage.LayerOptimization.RankingPoolMultiplier, cancellationToken);
@@ -362,7 +392,7 @@ namespace GTAEmblemMaker.Core
             }
 
             runClock.Stop();
-            return new FitResult(states, trace, current, payloadBuilder.Build(), budgetReached, baseTotalError, activeChoice.WeightMapId, perceptual == null ? null : perceptual.BackendName, performanceCounters, runClock.Elapsed.TotalMilliseconds);
+            return new FitResult(states, trace, current, payloadBuilder.Build(), budgetReached, baseTotalError, activeChoice.WeightMapId, perceptual == null ? null : perceptual.BackendName, performanceCounters, runClock.Elapsed.TotalMilliseconds, cleanSanitizer == null ? null : cleanSanitizer.Metrics);
         }
 
         internal static FitCandidate ChooseLowestEnergyCandidate(FitCandidate historical, IReadOnlyList<FitCandidate> catalogCandidates)
@@ -374,6 +404,19 @@ namespace GTAEmblemMaker.Core
                 if (candidate.Energy < best.Energy) best = candidate;
             }
             return best;
+        }
+
+        internal static IReadOnlyList<FitCandidate> CleanLogoFinalists(CudaSelectLayerResult selected)
+        {
+            if (selected == null) throw new ArgumentNullException("selected");
+            if (selected.Chains == null || selected.Chains.Count == 0) throw new InvalidOperationException("Clean Logo requires resident mixed-shape chain finalists.");
+            var finalists = new List<FitCandidate>(selected.Chains.Count);
+            for (var index = 0; index < selected.Chains.Count; index++)
+            {
+                var chain = selected.Chains[index];
+                finalists.Add(CandidateGenerator.FromResidentResult(chain.ShapeKind, chain.Candidate, chain.Score));
+            }
+            return finalists;
         }
 
         private static RockstarExporter.IncrementalBuilder RebuildPayload(IReadOnlyList<ShapeState> states, bool transparent, int backgroundRed, int backgroundGreen, int backgroundBlue, long timestamp, int budget, bool compatibilityCode, int minAxis)
