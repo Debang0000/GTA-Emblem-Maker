@@ -31,6 +31,20 @@ namespace GTAEmblemMaker.Core
         }
     }
 
+    internal sealed class CleanLogoAuditResult
+    {
+        internal IReadOnlyList<ShapeState> States { get; private set; }
+        internal IReadOnlyList<int> RetainedIndices { get; private set; }
+        internal byte[] CurrentRgba { get; private set; }
+
+        internal CleanLogoAuditResult(List<ShapeState> states, List<int> retainedIndices, byte[] currentRgba)
+        {
+            States = states.ToArray();
+            RetainedIndices = retainedIndices.ToArray();
+            CurrentRgba = currentRgba;
+        }
+    }
+
     internal sealed class CleanLogoSanitizer
     {
         private const int Size = 512;
@@ -44,6 +58,7 @@ namespace GTAEmblemMaker.Core
         private readonly int exportMinAxis;
         private readonly bool[] allowedAlphaSupport;
         private readonly bool[] allowedEdgeSupport;
+        private readonly byte[] initialCurrent;
         private byte[] current;
 
         internal CleanLogoMetrics Metrics { get; private set; }
@@ -56,7 +71,8 @@ namespace GTAEmblemMaker.Core
             ValidateRgba(currentRgba, "currentRgba");
             ValidateWeights(weightsQ8);
             target = (byte[])targetRgba.Clone();
-            current = (byte[])currentRgba.Clone();
+            initialCurrent = (byte[])currentRgba.Clone();
+            current = (byte[])initialCurrent.Clone();
             this.weightsQ8 = (byte[])weightsQ8.Clone();
             this.transparent = transparent;
             this.exportMinAxis = exportMinAxis;
@@ -123,6 +139,45 @@ namespace GTAEmblemMaker.Core
             current = proposal.CurrentRgba;
             CurrentError = proposal.CleanError;
             if (proposal.ColorSnapped) Metrics.ColorSnappedLayers++;
+        }
+
+        internal CleanLogoAuditResult AuditFinal(IReadOnlyList<ShapeState> states)
+        {
+            if (states == null) throw new ArgumentNullException("states");
+            var retainedStates = new List<ShapeState>(states.Count);
+            var retainedIndices = new List<int>(states.Count);
+            for (var index = 0; index < states.Count; index++)
+            {
+                if (states[index] == null) throw new ArgumentException("States cannot contain null.", "states");
+                retainedStates.Add(states[index]);
+                retainedIndices.Add(index);
+            }
+
+            while (true)
+            {
+                var replayed = Replay(retainedStates);
+                var strongEdges = StrongEdgePixels(replayed);
+                var violations = new bool[Size * Size];
+                var supportViolationPixels = 0;
+                var unsupportedEdgePixels = 0;
+                for (var pixel = 0; pixel < violations.Length; pixel++)
+                {
+                    var supportViolation = transparent && !allowedAlphaSupport[pixel] && replayed[pixel * 4 + 3] >= VisibleAlphaThreshold;
+                    var edgeViolation = strongEdges[pixel] && !allowedEdgeSupport[pixel];
+                    if (supportViolation) supportViolationPixels++;
+                    if (edgeViolation) unsupportedEdgePixels++;
+                    violations[pixel] = supportViolation || edgeViolation;
+                }
+                Metrics.FinalSupportViolationPixels = supportViolationPixels;
+                Metrics.FinalUnsupportedEdgePixels = unsupportedEdgePixels;
+                if (supportViolationPixels == 0 && unsupportedEdgePixels == 0) return new CleanLogoAuditResult(retainedStates, retainedIndices, replayed);
+
+                var removeAt = TopmostContributor(retainedStates, violations);
+                if (removeAt < 0) throw new InvalidOperationException("Clean Logo final violations are not attributable to a retained layer.");
+                retainedStates.RemoveAt(removeAt);
+                retainedIndices.RemoveAt(removeAt);
+                Metrics.EdgeRemovedLayers++;
+            }
         }
 
         internal static bool[] BuildAllowedAlphaSupport(byte[] targetRgba)
@@ -223,6 +278,27 @@ namespace GTAEmblemMaker.Core
                 if (!allowedAlphaSupport[pixel] && rgba[pixel * 4 + 3] >= VisibleAlphaThreshold) count++;
             }
             return count;
+        }
+
+        private byte[] Replay(IReadOnlyList<ShapeState> states)
+        {
+            var replayed = (byte[])initialCurrent.Clone();
+            for (var index = 0; index < states.Count; index++) replayed = RunArtifacts.RenderShapeOnto(replayed, states[index], exportMinAxis);
+            return replayed;
+        }
+
+        private int TopmostContributor(IReadOnlyList<ShapeState> states, bool[] violations)
+        {
+            var transparentBase = new byte[Size * Size * 4];
+            for (var index = states.Count - 1; index >= 0; index--)
+            {
+                var footprint = RunArtifacts.RenderShapeOnto(transparentBase, states[index], exportMinAxis);
+                for (var pixel = 0; pixel < violations.Length; pixel++)
+                {
+                    if (violations[pixel] && footprint[pixel * 4 + 3] > 0) return index;
+                }
+            }
+            return -1;
         }
 
         private static long PixelError(byte[] targetRgba, byte[] currentRgba, byte[] weightsQ8, int pixel)

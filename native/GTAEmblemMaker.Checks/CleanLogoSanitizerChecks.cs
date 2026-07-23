@@ -14,6 +14,8 @@ namespace GTAEmblemMaker.Checks
             CheckColorSnapAndAcceptance();
             CheckRankedFinalists();
             CheckSupportRejection();
+            CheckFinalEdgeAudit();
+            CheckEmptyAudit();
         }
 
         private static void CheckSupportMasks()
@@ -106,6 +108,32 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(1, sanitizer.Metrics.SupportRejectedLayers, "clean logo records rejected first finalist");
         }
 
+        private static void CheckFinalEdgeAudit()
+        {
+            var transparent = new byte[Size * Size * 4];
+            var baseState = new ShapeState("rectangle", 256, 256, 96, 72, 40, 160, 224, 255, 0);
+            var target = RunArtifacts.RenderShapeOnto(transparent, baseState, 4);
+            var unsupported = new ShapeState("rectangle", 256, 256, 24, 18, 0, 0, 0, 255, 0);
+            var sanitizer = new CleanLogoSanitizer(target, transparent, UniformWeights(), true, 4);
+            var audit = sanitizer.AuditFinal(new[] { baseState, unsupported });
+            Check.Equal(1, audit.States.Count, "clean logo audit retained layer count");
+            Check.Equal(0, audit.RetainedIndices[0], "clean logo audit removes topmost contributor");
+            Check.Equal(1, sanitizer.Metrics.EdgeRemovedLayers, "clean logo audit removal metric");
+            Check.Equal(0, sanitizer.Metrics.FinalSupportViolationPixels, "clean logo final support invariant");
+            Check.Equal(0, sanitizer.Metrics.FinalUnsupportedEdgePixels, "clean logo final edge invariant");
+            Check.Equal(Hash(target), Hash(audit.CurrentRgba), "clean logo audit exact retained replay");
+        }
+
+        private static void CheckEmptyAudit()
+        {
+            var transparent = new byte[Size * Size * 4];
+            var sanitizer = new CleanLogoSanitizer(transparent, transparent, UniformWeights(), true, 4);
+            var audit = sanitizer.AuditFinal(new ShapeState[0]);
+            Check.Equal(0, audit.States.Count, "clean logo empty audit terminates");
+            Check.Equal(0, sanitizer.Metrics.FinalSupportViolationPixels, "clean logo empty support invariant");
+            Check.Equal(0, sanitizer.Metrics.FinalUnsupportedEdgePixels, "clean logo empty edge invariant");
+        }
+
         private static byte[] OpaqueBlack()
         {
             var rgba = new byte[Size * Size * 4];
@@ -118,6 +146,11 @@ namespace GTAEmblemMaker.Checks
             var weights = new byte[Size * Size * 2];
             for (var offset = 0; offset < weights.Length; offset += 2) weights[offset + 1] = 1;
             return weights;
+        }
+
+        private static string Hash(byte[] bytes)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create()) return System.BitConverter.ToString(sha.ComputeHash(bytes));
         }
     }
 }

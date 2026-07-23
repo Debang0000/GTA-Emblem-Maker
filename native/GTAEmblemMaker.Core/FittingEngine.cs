@@ -391,6 +391,28 @@ namespace GTAEmblemMaker.Core
                 if (perceptual != null) perceptual.Dispose();
             }
 
+            if (cleanLogo)
+            {
+                var audit = cleanSanitizer.AuditFinal(states);
+                var auditedStates = new List<ShapeState>(audit.States.Count);
+                var auditedTrace = new List<FitLayerTrace>(audit.States.Count);
+                var auditedImprovements = new List<ulong>(audit.States.Count);
+                for (var index = 0; index < audit.States.Count; index++)
+                {
+                    var originalIndex = audit.RetainedIndices[index];
+                    auditedStates.Add(audit.States[index]);
+                    auditedTrace.Add(trace[originalIndex]);
+                    auditedImprovements.Add(improvements[originalIndex]);
+                }
+                states = auditedStates;
+                trace = auditedTrace;
+                improvements = auditedImprovements;
+                current = audit.CurrentRgba;
+                payloadBuilder = RebuildPayload(states, request.Source.IsTransparent, backgroundRed, backgroundGreen, backgroundBlue, timestamp, budget, false, stage.MinAxis);
+                baseTotalError = FitMath.WeightedFullError(target, current, activeMap.Q8);
+                if (cleanSanitizer.Metrics.FinalSupportViolationPixels != 0 || cleanSanitizer.Metrics.FinalUnsupportedEdgePixels != 0) throw new InvalidOperationException("Clean Logo final output violates its edge invariants.");
+            }
+
             runClock.Stop();
             return new FitResult(states, trace, current, payloadBuilder.Build(), budgetReached, baseTotalError, activeChoice.WeightMapId, perceptual == null ? null : perceptual.BackendName, performanceCounters, runClock.Elapsed.TotalMilliseconds, cleanSanitizer == null ? null : cleanSanitizer.Metrics);
         }
