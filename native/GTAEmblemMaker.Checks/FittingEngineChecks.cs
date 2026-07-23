@@ -5,6 +5,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using GTAEmblemMaker.Core;
@@ -38,7 +39,7 @@ namespace GTAEmblemMaker.Checks
                 CheckRun(perceptualProfile, scorer, opaque, false, "f5d7fb4366bc5eabfa6835e61b3b6315719e1e38b3d44b103fff323709410dbd", "917c81060fcb9279dbedc3ddb39097e324a5ca582bf38028a3f96cd0aedb1ac7", null);
                 CheckRun(perceptualProfile, scorer, transparent, true, "1919df54919f41b935792812875baf91188d3dd09fb94e321c6c51cf18205b11", "e821ce57fb70818b77cd5d469cf3b823fe62f3e97bf64c416ac362aaf6f60532", Path.Combine(folder, "runs"));
                 CheckBeamRun(beamProfile, perceptualProfile, scorer, transparent);
-                CheckCleanLogoRun(cleanLogoProfile, scorer);
+                CheckCleanLogoRun(cleanLogoProfile, scorer, Path.Combine(folder, "clean-runs"));
                 CheckBudget(perceptualProfile, scorer, opaque);
                 CheckCancellation(perceptualProfile, scorer, opaque);
             }
@@ -64,7 +65,7 @@ namespace GTAEmblemMaker.Checks
             Check.Equal("#transparent", beam.Payload.BackgroundColor, "beam transparent background");
         }
 
-        private static void CheckCleanLogoRun(FitProfile profile, string scorer)
+        private static void CheckCleanLogoRun(FitProfile profile, string scorer, string artifactRoot)
         {
             var transparent = new byte[512 * 512 * 4];
             var targetState = new ShapeState("ellipse", 256, 256, 72, 48, 36, 148, 224, 255, 23);
@@ -77,6 +78,24 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(Hash(exact), Hash(result.CurrentRgba), "clean logo current uses exact payload replay");
             Check.True(result.Payload.GeneratedCodeLength <= profile.Stages[0].Budget, "clean logo payload budget");
             Check.True(result.CleanLogoMetrics != null, "clean logo metrics available");
+            var artifacts = RunArtifacts.Write(request, result, artifactRoot);
+            var root = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(artifacts.MetricsJson)) as Dictionary<string, object>;
+            Check.True(root != null && root.ContainsKey("cleanLogo"), "clean logo metrics object");
+            var clean = root["cleanLogo"] as Dictionary<string, object>;
+            Check.True(clean != null, "clean logo metrics dictionary");
+            Check.Equal(result.CleanLogoMetrics.SupportRejectedLayers, Convert.ToInt32(clean["supportRejectedLayers"]), "clean logo support rejection artifact metric");
+            Check.Equal(result.CleanLogoMetrics.LocalRegressionRejectedLayers, Convert.ToInt32(clean["localRegressionRejectedLayers"]), "clean logo local rejection artifact metric");
+            Check.Equal(result.CleanLogoMetrics.ColorSnappedLayers, Convert.ToInt32(clean["colorSnappedLayers"]), "clean logo color snap artifact metric");
+            Check.Equal(result.CleanLogoMetrics.EdgeRemovedLayers, Convert.ToInt32(clean["edgeRemovedLayers"]), "clean logo edge removal artifact metric");
+            Check.Equal(0, Convert.ToInt32(clean["finalSupportViolationPixels"]), "clean logo artifact support invariant");
+            Check.Equal(0, Convert.ToInt32(clean["finalUnsupportedEdgePixels"]), "clean logo artifact edge invariant");
+            Check.Equal(Hash(File.ReadAllBytes(artifacts.PreviewPng)), Hash(File.ReadAllBytes(artifacts.PayloadPreviewPng)), "clean logo artifact previews use audited sequence");
+            var reloadedPreview = ReadPngAsPremultipliedRgba(artifacts.PreviewPng);
+            Check.Equal(0, MaximumChannelDifference(result.CurrentRgba, reloadedPreview, 3, 4), "clean logo preview alpha parity");
+            Check.True(MaximumChannelDifference(result.CurrentRgba, reloadedPreview, 0, 1) <= 1, "clean logo preview color quantization");
+            result.CleanLogoMetrics.FinalSupportViolationPixels = 1;
+            Check.Throws<InvalidOperationException>(() => RunArtifacts.Write(request, result, Path.Combine(artifactRoot, "invalid")), "clean logo invalid artifacts rejected");
+            result.CleanLogoMetrics.FinalSupportViolationPixels = 0;
         }
 
         private static void CheckLayerOptimizer()
@@ -205,6 +224,7 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(result.Payload.ConsoleCode, File.ReadAllText(artifacts.ImportCode), "run import code");
             Check.Equal(request.Profile.SourceJson, File.ReadAllText(artifacts.ProfileJson), "run profile snapshot");
             Check.True(File.ReadAllText(artifacts.MetricsJson).Contains("profileSha256"), "run profile hash metadata");
+            Check.False(File.ReadAllText(artifacts.MetricsJson).Contains("\"cleanLogo\""), "legacy metrics exclude clean logo object");
             Check.True(File.ReadAllText(artifacts.TraceJson).Contains("perceptualRerankApplied"), "run trace metadata");
             Check.True(File.ReadAllText(artifacts.ShapesJson).Contains("\"angleDegrees\""), "run shape state metadata");
             var expectedWeights = FitMath.BuildWeightMaps(request.Source.CanonicalRgba, 512, 512)[result.WeightMapId].Q8;

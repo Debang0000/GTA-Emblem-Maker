@@ -55,6 +55,7 @@ namespace GTAEmblemMaker.Core
             if (request == null) throw new ArgumentNullException("request");
             if (result == null) throw new ArgumentNullException("result");
             if (String.IsNullOrWhiteSpace(rootFolder)) throw new ArgumentException("Run root folder is required.", "rootFolder");
+            if (result.CleanLogoMetrics != null && (result.CleanLogoMetrics.FinalSupportViolationPixels != 0 || result.CleanLogoMetrics.FinalUnsupportedEdgePixels != 0)) throw new InvalidOperationException("Clean Logo artifacts require zero final edge violations.");
             Directory.CreateDirectory(rootFolder);
             var name = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture) + "-" + request.Profile.Id + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             var temporary = Path.Combine(rootFolder, ".tmp-" + name);
@@ -86,7 +87,7 @@ namespace GTAEmblemMaker.Core
         {
             var stage = FitMath.ResolveStage(request.Profile, "current-image-fit");
             var counters = result.PerformanceCounters;
-            return new Dictionary<string, object>
+            var metrics = new Dictionary<string, object>
             {
                 { "engineVersion", EngineInfo.Version },
                 { "profileId", request.Profile.Id },
@@ -116,6 +117,20 @@ namespace GTAEmblemMaker.Core
                 { "residentCatalogSynchronizationCount", counters == null ? 0 : counters.ResidentCatalogSynchronizationCount },
                 { "catalogHostToDeviceBytes", counters == null ? 0 : counters.CatalogHostToDeviceBytes }
             };
+            if (result.CleanLogoMetrics != null)
+            {
+                var clean = result.CleanLogoMetrics;
+                metrics.Add("cleanLogo", new Dictionary<string, object>
+                {
+                    { "supportRejectedLayers", clean.SupportRejectedLayers },
+                    { "localRegressionRejectedLayers", clean.LocalRegressionRejectedLayers },
+                    { "colorSnappedLayers", clean.ColorSnappedLayers },
+                    { "edgeRemovedLayers", clean.EdgeRemovedLayers },
+                    { "finalSupportViolationPixels", clean.FinalSupportViolationPixels },
+                    { "finalUnsupportedEdgePixels", clean.FinalUnsupportedEdgePixels }
+                });
+            }
+            return metrics;
         }
 
         private static object[] Trace(IReadOnlyList<FitLayerTrace> trace)
