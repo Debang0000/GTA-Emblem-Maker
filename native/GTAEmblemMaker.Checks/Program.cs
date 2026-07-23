@@ -69,10 +69,10 @@ namespace GTAEmblemMaker.Checks
                 RunFormalFit(args, false);
                 return;
             }
-            Check.Equal("1.1.2", EngineInfo.Version, "engine version");
+            Check.Equal("1.1.3", EngineInfo.Version, "engine version");
 
             var catalog = ProfileCatalog.Load(ProfileFolder());
-            Check.Equal(3, catalog.Profiles.Count, "production profile count");
+            Check.Equal(4, catalog.Profiles.Count, "production profile count");
             Check.Equal("v1-beam-clean", catalog.Default.Id, "default profile");
             Check.Equal("Beam Clean", catalog.Default.DisplayName, "default profile display name");
             foreach (var profile in catalog.Profiles)
@@ -105,11 +105,13 @@ namespace GTAEmblemMaker.Checks
             FitProfile beamCleanProfile = null;
             FitProfile perceptualProfile = null;
             FitProfile catalogProfile = null;
+            FitProfile cleanLogoProfile = null;
             for (var profileIndex = 0; profileIndex < catalog.Profiles.Count; profileIndex++)
             {
                 if (catalog.Profiles[profileIndex].Id == "v1-beam-clean") beamCleanProfile = catalog.Profiles[profileIndex];
                 if (catalog.Profiles[profileIndex].Id == "v1-perceptual") perceptualProfile = catalog.Profiles[profileIndex];
                 if (catalog.Profiles[profileIndex].Id == "v1-catalog-quality") catalogProfile = catalog.Profiles[profileIndex];
+                if (catalog.Profiles[profileIndex].Id == "v1-clean-logo") cleanLogoProfile = catalog.Profiles[profileIndex];
             }
             Check.True(beamCleanProfile != null, "beam clean profile available");
             Check.Equal("beam", beamCleanProfile.Pipeline.Runner, "beam clean runner");
@@ -124,6 +126,27 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(1001, catalogProfile.Stages[0].PerceptualRerank.FirstRerankLayer, "official catalog perceptual boundary");
             PerceptualChecks.CheckNativeEdgeBackend(catalogProfile);
             CatalogSearchChecks.CheckPerceptualPool(catalogProfile);
+            Check.True(cleanLogoProfile != null, "clean logo profile available");
+            Check.Equal("Clean Logo", cleanLogoProfile.DisplayName, "clean logo display name");
+            Check.False(cleanLogoProfile.IsDefault, "clean logo is opt-in");
+            Check.Equal("1.1.3", cleanLogoProfile.MinimumEngineVersion, "clean logo minimum engine version");
+            Check.Equal("clean-logo", cleanLogoProfile.Pipeline.Runner, "clean logo runner");
+            var cleanStage = cleanLogoProfile.Stages[0];
+            Check.Equal(1500, cleanStage.MaxLayers, "clean logo maximum layers");
+            Check.Equal(1250000, cleanStage.Budget, "clean logo budget");
+            Check.Equal(4, cleanStage.MinAxis, "clean logo minimum axis");
+            Check.Equal(1, cleanStage.ShapeChoicesByLayer.Count, "clean logo shape schedule count");
+            Check.Equal(1, cleanStage.ShapeChoicesByLayer[0].FromLayer, "clean logo shapes start at layer one");
+            Check.Equal(3, cleanStage.ShapeChoicesByLayer[0].Shapes.Count, "clean logo shape count");
+            Check.Equal("rotated", cleanStage.ShapeChoicesByLayer[0].Shapes[0], "clean logo ellipse");
+            Check.Equal("rotated-triangle", cleanStage.ShapeChoicesByLayer[0].Shapes[1], "clean logo triangle");
+            Check.Equal("rotated-rect", cleanStage.ShapeChoicesByLayer[0].Shapes[2], "clean logo rectangle");
+            Check.True(cleanStage.CatalogSearch == null, "clean logo excludes catalog search");
+            Check.True(cleanStage.StrokeSearch == null, "clean logo excludes stroke search");
+            Check.True(cleanStage.PerceptualRerank == null, "clean logo excludes perceptual rerank");
+            Check.Equal(0, cleanStage.LayerOptimization.OverfitPercent, "clean logo excludes overfit");
+            Check.Equal(0, cleanStage.LayerOptimization.RefinePercent, "clean logo excludes refinement");
+            Check.Equal(0, cleanStage.LayerOptimization.ReplacementPercent, "clean logo excludes replacement");
             FittingEngineChecks.Run(perceptualProfile, beamCleanProfile);
         }
 

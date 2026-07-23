@@ -9,7 +9,7 @@ namespace GTAEmblemMaker.Core
         public static async Task<FitResult> RunAsync(FitRequest request, IProgress<FitProgress> progress, CancellationToken cancellationToken)
         {
             if (request == null) throw new ArgumentNullException("request");
-            if (request.Profile.Pipeline.Runner == "greedy" || request.Profile.Pipeline.Runner == "catalog-compatible") return await FittingEngine.RunAsync(request, progress, cancellationToken).ConfigureAwait(false);
+            if (request.Profile.Pipeline.Runner == "greedy" || request.Profile.Pipeline.Runner == "catalog-compatible" || request.Profile.Pipeline.Runner == "clean-logo") return await FittingEngine.RunAsync(request, progress, cancellationToken).ConfigureAwait(false);
             var beam = await BeamFitter.RunAsync(request, progress, cancellationToken).ConfigureAwait(false);
             if (request.Profile.Pipeline.Runner == "beam") return beam;
             return await ExactPairRefiner.RunAsync(request, beam, progress, cancellationToken).ConfigureAwait(false);

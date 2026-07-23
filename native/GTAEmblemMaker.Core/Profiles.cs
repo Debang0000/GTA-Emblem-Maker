@@ -95,10 +95,11 @@ namespace GTAEmblemMaker.Core
             var optional = new[] { "beamWidth", "branchFactor", "windowSize", "windowStride", "windowCount", "selectedLayers", "exactLayers", "exactRounds", "pairCandidates" };
             EnsureFieldsWithOptional(value, "pipeline", optional, "runner");
             var runner = RequiredString(value, "runner", "pipeline");
-            if (runner == "greedy" || runner == "catalog-compatible")
+            if (runner == "greedy" || runner == "catalog-compatible" || runner == "clean-logo")
             {
                 if (value.Count != 1) throw new ProfileValidationException("Greedy pipeline does not accept beam or pair settings.");
-                return runner == "greedy" ? PipelineSettings.Greedy : PipelineSettings.CatalogCompatible;
+                if (runner == "greedy") return PipelineSettings.Greedy;
+                return runner == "catalog-compatible" ? PipelineSettings.CatalogCompatible : PipelineSettings.CleanLogo;
             }
             if (runner != "beam" && runner != "beam-pair") throw new ProfileValidationException("Unknown pipeline runner: " + runner);
             RequirePipelineFields(value, "beamWidth", "branchFactor");
@@ -133,7 +134,7 @@ namespace GTAEmblemMaker.Core
 
         private static FitStage ReadStage(Dictionary<string, object> value)
         {
-            EnsureFieldsWithOptional(value, "stage", new[] { "layerOptimization", "strokeSearch", "catalogSearch" }, "id", "maxLayers", "budget", "minAxis", "residentSelectLayer", "residentSelection", "residentDeviceChunk", "residentDeviceChunkRounds", "shapeChoicesByLayer", "opaqueWeightMapSchedule", "transparentWeightMapSchedule", "perceptualRerank");
+            EnsureFieldsWithOptional(value, "stage", new[] { "layerOptimization", "strokeSearch", "catalogSearch", "perceptualRerank" }, "id", "maxLayers", "budget", "minAxis", "residentSelectLayer", "residentSelection", "residentDeviceChunk", "residentDeviceChunkRounds", "shapeChoicesByLayer", "opaqueWeightMapSchedule", "transparentWeightMapSchedule");
             var id = RequiredString(value, "id", "stage");
             var maxLayers = RequiredInt(value, "maxLayers", "stage");
             var budget = RequiredInt(value, "budget", "stage");
@@ -156,7 +157,9 @@ namespace GTAEmblemMaker.Core
                 ReadShapeSchedule(RequiredArray(value, "shapeChoicesByLayer", "stage"), maxLayers),
                 ReadWeightSchedule(RequiredArray(value, "opaqueWeightMapSchedule", "stage"), maxLayers),
                 ReadWeightSchedule(RequiredArray(value, "transparentWeightMapSchedule", "stage"), maxLayers),
-                ReadRerank(RequiredObject(value["perceptualRerank"], "perceptualRerank"), maxLayers),
+                value.ContainsKey("perceptualRerank")
+                    ? ReadRerank(RequiredObject(value["perceptualRerank"], "perceptualRerank"), maxLayers)
+                    : null,
                 value.ContainsKey("layerOptimization")
                     ? ReadLayerOptimization(RequiredObject(value["layerOptimization"], "layerOptimization"))
                     : new LayerOptimization(0, 0, 2, 0, 64, 0.5),
@@ -449,6 +452,7 @@ namespace GTAEmblemMaker.Core
     {
         public static readonly PipelineSettings Greedy = new PipelineSettings("greedy", 0, 0, 0, 0, 0, 0, 0, 0, 0);
         public static readonly PipelineSettings CatalogCompatible = new PipelineSettings("catalog-compatible", 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        public static readonly PipelineSettings CleanLogo = new PipelineSettings("clean-logo", 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
         public string Runner { get; private set; }
         public int BeamWidth { get; private set; }
