@@ -94,6 +94,7 @@ namespace GTAEmblemMaker.Checks
             CheckRockstarExport();
             CheckRockstarExportReviewCases();
             RunArtifactsChecks.Run();
+            CleanLogoSanitizerChecks.Run();
             BundleLauncherChecks.Run();
             OfficialCatalogCurveChecks.Run();
             OfficialCatalogRoundChecks.Run();
