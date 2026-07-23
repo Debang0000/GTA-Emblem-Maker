@@ -14,6 +14,7 @@ namespace GTAEmblemMaker.Checks
             CheckColorSnapAndAcceptance();
             CheckRankedFinalists();
             CheckSupportRejection();
+            CheckForegroundProgressEdge();
             CheckFinalEdgeAudit();
             CheckEmptyAudit();
         }
@@ -27,7 +28,7 @@ namespace GTAEmblemMaker.Checks
             Check.True(alphaSupport[11 * Size + 11], "clean logo alpha support diagonal dilation");
             Check.False(alphaSupport[10 * Size + 12], "clean logo alpha support dilation boundary");
 
-            var edgeTarget = OpaqueBlack();
+            var edgeTarget = new byte[Size * Size * 4];
             edgeTarget[(20 * Size + 20) * 4] = 24;
             var edgeSupport = CleanLogoSanitizer.BuildAllowedEdgeSupport(edgeTarget);
             Check.True(edgeSupport[20 * Size + 20], "clean logo edge threshold");
@@ -113,7 +114,7 @@ namespace GTAEmblemMaker.Checks
             var transparent = new byte[Size * Size * 4];
             var baseState = new ShapeState("rectangle", 256, 256, 96, 72, 40, 160, 224, 255, 0);
             var target = RunArtifacts.RenderShapeOnto(transparent, baseState, 4);
-            var unsupported = new ShapeState("rectangle", 256, 256, 24, 18, 0, 0, 0, 255, 0);
+            var unsupported = new ShapeState("rectangle", 64, 64, 24, 18, 0, 0, 0, 255, 0);
             var sanitizer = new CleanLogoSanitizer(target, transparent, UniformWeights(), true, 4);
             var audit = sanitizer.AuditFinal(new[] { baseState, unsupported });
             Check.Equal(1, audit.States.Count, "clean logo audit retained layer count");
@@ -122,6 +123,17 @@ namespace GTAEmblemMaker.Checks
             Check.Equal(0, sanitizer.Metrics.FinalSupportViolationPixels, "clean logo final support invariant");
             Check.Equal(0, sanitizer.Metrics.FinalUnsupportedEdgePixels, "clean logo final edge invariant");
             Check.Equal(Hash(target), Hash(audit.CurrentRgba), "clean logo audit exact retained replay");
+        }
+
+        private static void CheckForegroundProgressEdge()
+        {
+            var transparent = new byte[Size * Size * 4];
+            var targetState = new ShapeState("rectangle", 256, 256, 96, 72, 40, 160, 224, 255, 0);
+            var target = RunArtifacts.RenderShapeOnto(transparent, targetState, 4);
+            var internalPatch = new FitCandidate(13, 0, CandidateShapeKind.RotatedRectangle, "rotated-rect", "rotated-rect", 256, 256, 32, 24, 40, 160, 224, 255, 0, 0.01, 100, 10);
+            var sanitizer = new CleanLogoSanitizer(target, transparent, UniformWeights(), true, 4);
+            CleanLogoProposal proposal;
+            Check.True(sanitizer.TrySelect(new[] { internalPatch }, out proposal), "clean logo permits an incremental edge inside source foreground");
         }
 
         private static void CheckEmptyAudit()

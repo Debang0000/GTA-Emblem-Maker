@@ -114,7 +114,13 @@ namespace GTAEmblemMaker.Core
 
                 var state = new ShapeState(original.Shape, original.Cx, original.Cy, original.Rx, original.Ry, red, green, blue, 255, original.AngleDegrees);
                 var next = RunArtifacts.RenderShapeOnto(current, state, exportMinAxis);
-                if (transparent && CountSupportViolations(next) != 0)
+                var supportViolations = transparent ? CountSupportViolations(next) : 0;
+                if (supportViolations != 0)
+                {
+                    Metrics.SupportRejectedLayers++;
+                    continue;
+                }
+                if (HasUnsupportedEdge(next, footprint))
                 {
                     Metrics.SupportRejectedLayers++;
                     continue;
@@ -191,7 +197,12 @@ namespace GTAEmblemMaker.Core
         internal static bool[] BuildAllowedEdgeSupport(byte[] targetRgba)
         {
             ValidateRgba(targetRgba, "targetRgba");
-            return Dilate(StrongEdgePixels(targetRgba));
+            var support = Dilate(StrongEdgePixels(targetRgba));
+            for (var pixel = 0; pixel < support.Length; pixel++)
+            {
+                if (targetRgba[pixel * 4 + 3] > 0) support[pixel] = true;
+            }
+            return support;
         }
 
         internal static long CleanError(byte[] targetRgba, byte[] currentRgba, byte[] weightsQ8)
@@ -280,6 +291,39 @@ namespace GTAEmblemMaker.Core
             return count;
         }
 
+        private bool HasUnsupportedEdge(byte[] rgba, byte[] footprint)
+        {
+            var minimumX = Size;
+            var minimumY = Size;
+            var maximumX = -1;
+            var maximumY = -1;
+            for (var y = 0; y < Size; y++)
+            {
+                for (var x = 0; x < Size; x++)
+                {
+                    if (footprint[(y * Size + x) * 4 + 3] == 0) continue;
+                    minimumX = Math.Min(minimumX, x);
+                    minimumY = Math.Min(minimumY, y);
+                    maximumX = Math.Max(maximumX, x);
+                    maximumY = Math.Max(maximumY, y);
+                }
+            }
+            if (maximumX < 0) return true;
+            minimumX = Math.Max(0, minimumX - 1);
+            minimumY = Math.Max(0, minimumY - 1);
+            maximumX = Math.Min(Size - 1, maximumX + 1);
+            maximumY = Math.Min(Size - 1, maximumY + 1);
+            for (var y = minimumY; y <= maximumY; y++)
+            {
+                for (var x = minimumX; x <= maximumX; x++)
+                {
+                    var pixel = y * Size + x;
+                    if (!allowedEdgeSupport[pixel] && IsStrongEdgeAt(rgba, x, y)) return true;
+                }
+            }
+            return false;
+        }
+
         private byte[] Replay(IReadOnlyList<ShapeState> states)
         {
             var replayed = (byte[])initialCurrent.Clone();
@@ -325,25 +369,28 @@ namespace GTAEmblemMaker.Core
                 for (var x = 0; x < Size; x++)
                 {
                     var pixel = y * Size + x;
-                    for (var deltaY = -1; deltaY <= 1 && !result[pixel]; deltaY++)
-                    {
-                        var neighborY = y + deltaY;
-                        if (neighborY < 0 || neighborY >= Size) continue;
-                        for (var deltaX = -1; deltaX <= 1; deltaX++)
-                        {
-                            if (deltaX == 0 && deltaY == 0) continue;
-                            var neighborX = x + deltaX;
-                            if (neighborX < 0 || neighborX >= Size) continue;
-                            if (StrongDifference(rgba, pixel * 4, (neighborY * Size + neighborX) * 4))
-                            {
-                                result[pixel] = true;
-                                break;
-                            }
-                        }
-                    }
+                    result[pixel] = IsStrongEdgeAt(rgba, x, y);
                 }
             }
             return result;
+        }
+
+        private static bool IsStrongEdgeAt(byte[] rgba, int x, int y)
+        {
+            var pixelOffset = (y * Size + x) * 4;
+            for (var deltaY = -1; deltaY <= 1; deltaY++)
+            {
+                var neighborY = y + deltaY;
+                if (neighborY < 0 || neighborY >= Size) continue;
+                for (var deltaX = -1; deltaX <= 1; deltaX++)
+                {
+                    if (deltaX == 0 && deltaY == 0) continue;
+                    var neighborX = x + deltaX;
+                    if (neighborX < 0 || neighborX >= Size) continue;
+                    if (StrongDifference(rgba, pixelOffset, (neighborY * Size + neighborX) * 4)) return true;
+                }
+            }
+            return false;
         }
 
         private static bool StrongDifference(byte[] rgba, int left, int right)
