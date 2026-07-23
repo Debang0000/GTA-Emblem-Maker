@@ -279,7 +279,7 @@ namespace GTAEmblemMaker.Core
                         {
                             var previousError = baseTotalError;
                             cleanSanitizer.Commit(cleanProposal);
-                            current = cleanProposal.CurrentRgba;
+                            current = cleanSanitizer.CurrentRgba;
                             baseTotalError = FitMath.WeightedFullError(target, current, activeMap.Q8);
                             improvements.Add(previousError >= baseTotalError ? checked((ulong)(previousError - baseTotalError)) : 0);
                         }
